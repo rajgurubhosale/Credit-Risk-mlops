@@ -1,2 +1,9 @@
 logs
 datas
+src.egg-info/
+artifact
+template.py
+notebooks
+template.py
+src\__pycache__
+**\__pycache__\
