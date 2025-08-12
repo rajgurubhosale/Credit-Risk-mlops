@@ -1,0 +1,21 @@
+columns:
+  - SK_ID_PREV: int64
+  - SK_ID_CURR: int64
+  - NUM_INSTALMENT_VERSION: float64
+  - NUM_INSTALMENT_NUMBER: int64
+  - DAYS_INSTALMENT: float64
+  - DAYS_ENTRY_PAYMENT: float64
+  - AMT_INSTALMENT: float64
+  - AMT_PAYMENT: float64
+
+categorical_columns:
+
+numerical_columns:
+  - SK_ID_PREV
+  - SK_ID_CURR
+  - NUM_INSTALMENT_VERSION
+  - NUM_INSTALMENT_NUMBER
+  - DAYS_INSTALMENT
+  - DAYS_ENTRY_PAYMENT
+  - AMT_INSTALMENT
+  - AMT_PAYMENT

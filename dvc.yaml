@@ -7,6 +7,20 @@ stages:
       - src/entity/data_ingestion_artifact.py
     outs:
       - artifact/raw
+  02_data_validation:
+    cmd: python src/components/02_data_validation.py
+    deps:
+      - src/components/02_data_validation.py
+      - artifact/raw
+      - config/schema.yaml
+      - src/constants/__init__.py
+      - src/entity/config_entity.py
+      - src/entity/data_ingestion_artifact.py
+      - src/constants/data_ingestion_constants.py
+    outs:
+      - validation_report/validation_report.yaml
+
+
   
   
  

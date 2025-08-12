@@ -1,11 +1,11 @@
 logs/
+artifact/
 src.egg-info/
-artifact
 template.py
 notebooks
 template.py
 src\__pycache__
 **\__pycache__\
 project_working_problems_or_info.txt
-
+Dockerfile
  

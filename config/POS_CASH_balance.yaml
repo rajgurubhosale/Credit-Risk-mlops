@@ -1,0 +1,21 @@
+columns:
+  - SK_ID_PREV: int64
+  - SK_ID_CURR: int64
+  - MONTHS_BALANCE: int64
+  - CNT_INSTALMENT: float64
+  - CNT_INSTALMENT_FUTURE: float64
+  - NAME_CONTRACT_STATUS: object
+  - SK_DPD: int64
+  - SK_DPD_DEF: int64
+
+categorical_columns:
+  - NAME_CONTRACT_STATUS
+
+numerical_columns:
+  - SK_ID_PREV
+  - SK_ID_CURR
+  - MONTHS_BALANCE
+  - CNT_INSTALMENT
+  - CNT_INSTALMENT_FUTURE
+  - SK_DPD
+  - SK_DPD_DEF

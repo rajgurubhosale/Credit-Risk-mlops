@@ -1,0 +1,11 @@
+columns:
+  - SK_ID_BUREAU: int64
+  - MONTHS_BALANCE: int64
+  - STATUS: object
+
+categorical_columns:
+  - STATUS
+
+numerical_columns:
+  - SK_ID_BUREAU
+  - MONTHS_BALANCE

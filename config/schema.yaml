@@ -1,0 +1,33 @@
+#dataset scheama configuration
+#whenever we make changes in the datapath or schema path update this file 
+# and the data_path are in the artifact\raw dir
+# used for the data validtion
+
+datasets:
+  - name: application_data
+    data_path: application_data.csv
+    schema_path: config\application_data.yaml
+
+  - name: bureau_balance_data
+    data_path: bureau_balance.csv
+    schema_path: config\bureau_balance.yaml
+
+  - name: bureau_data
+    data_path: bureau.csv
+    schema_path: config\bureau.yaml
+
+  - name: credit_card_balance
+    data_path:  credit_card_balance.csv
+    schema_path: config\credit_card_balance.yaml
+
+  - name: installment_payments_data
+    data_path: installments_payments.csv
+    schema_path: config\installments_payments.yaml
+
+  - name: pos_cash_data
+    data_path: POS_CASH_balance.csv
+    schema_path: config\POS_CASH_balance.yaml
+
+  - name: previous_application_data
+    data_path: previous_application.csv
+    schema_path: config\previous_application.yaml
