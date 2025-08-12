@@ -1,0 +1,23 @@
+schema: '2.0'
+stages:
+  01_data_ingestion:
+    cmd: python src/components/01_data_ingestion.py
+    deps:
+    - path: src/components/01_data_ingestion.py
+      hash: md5
+      md5: e467d150294213309c0aab609fe06b6c
+      size: 2378
+    - path: src/constants/data_ingestion_constants.py
+      hash: md5
+      md5: 5a8c22afd113bae51c617af40ceab5de
+      size: 621
+    - path: src/entity/data_ingestion_artifact.py
+      hash: md5
+      md5: 1e7d9614296b6028a6f59dbf7c88a221
+      size: 1341
+    outs:
+    - path: artifact/raw
+      hash: md5
+      md5: 3850413e5d3fe4e71cc4f32afb5c092a.dir
+      size: 2714293161
+      nfiles: 7

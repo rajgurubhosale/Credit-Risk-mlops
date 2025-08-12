@@ -1,12 +1,12 @@
 stages:
-  data_ingestion:
-    cmd: src/components/data_ingestion.py
+  01_data_ingestion:
+    cmd: python src/components/01_data_ingestion.py
     deps:
-      - src/componentsdata_ingestion.py
-      - src/constants/data_ingestion_constant.py
-      - src/entity/data_ingestion_artifact_entity.py
-    out:
-      artifact/raw
-
-
-    
+      - src/components/01_data_ingestion.py
+      - src/constants/data_ingestion_constants.py
+      - src/entity/data_ingestion_artifact.py
+    outs:
+      - artifact/raw
+  
+  
+ 
