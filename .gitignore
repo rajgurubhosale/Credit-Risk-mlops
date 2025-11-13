@@ -2,10 +2,17 @@ logs/
 artifact/
 src.egg-info/
 template.py
-notebooks
+notebooks/02_EDA.ipynb
+notebooks/FeatureENG.txt
+notebooks/cleanining_application_train.txt
 template.py
 src\__pycache__
 **\__pycache__\
 project_working_problems_or_info.txt
 Dockerfile
- 
+app.py
+D:\home loan credit risk\Dockerfile
+__pycache__/
+*.pyc
+*.pyo
+*.pyd

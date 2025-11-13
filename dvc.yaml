@@ -21,5 +21,17 @@ stages:
     outs:
       - validation_report/validation_report.yaml
   
+  03_data_transformation.py:
+    cmd: python src/components/03_data_transformation.py
+    deps:
+      - src/components/03_data_transformation.py
+      - validation_report/validation_report.yaml
+      - src/constants/data_transformation_constant.py
+      - src/entity/data_transformation_artifact.py
+      - artifact/raw
+    outs:
+      - artifact/interim
   
+  
+ 
  

@@ -9,15 +9,82 @@ stages:
       size: 2378
     - path: src/constants/data_ingestion_constants.py
       hash: md5
-      md5: 5a8c22afd113bae51c617af40ceab5de
-      size: 621
+      md5: 4722db3cabe0908a7bcd1fadd23ddd7e
+      size: 682
     - path: src/entity/data_ingestion_artifact.py
       hash: md5
-      md5: 1e7d9614296b6028a6f59dbf7c88a221
-      size: 1341
+      md5: ec74dbce2443cd8f778aa15780402dae
+      size: 1405
     outs:
     - path: artifact/raw
       hash: md5
       md5: 3850413e5d3fe4e71cc4f32afb5c092a.dir
       size: 2714293161
       nfiles: 7
+  02_data_validation:
+    cmd: python src/components/02_data_validation.py
+    deps:
+    - path: artifact/raw
+      hash: md5
+      md5: 3850413e5d3fe4e71cc4f32afb5c092a.dir
+      size: 2714293161
+      nfiles: 7
+    - path: config/schema.yaml
+      hash: md5
+      md5: 369b20754d6e406e3ef83b1ee8343851
+      size: 1056
+    - path: src/components/02_data_validation.py
+      hash: md5
+      md5: fc65b4bd6ecea570a4479f2e40035948
+      size: 8675
+    - path: src/constants/data_ingestion_constants.py
+      hash: md5
+      md5: 4722db3cabe0908a7bcd1fadd23ddd7e
+      size: 682
+    - path: src/constants/data_validaton_constant.py
+      hash: md5
+      md5: c163bae015544ee6120b2ee4de033d48
+      size: 53
+    - path: src/entity/data_ingestion_artifact.py
+      hash: md5
+      md5: ec74dbce2443cd8f778aa15780402dae
+      size: 1405
+    - path: src/entity/data_validation_artifact.py
+      hash: md5
+      md5: fd961532c9cce64d68f4e3f2c45f2544
+      size: 695
+    outs:
+    - path: validation_report/validation_report.yaml
+      hash: md5
+      md5: f524e173bb7788272c4c07ed1fcfb94c
+      size: 25
+  03_data_transformation.py:
+    cmd: python src/components/03_data_transformation.py
+    deps:
+    - path: artifact/raw
+      hash: md5
+      md5: 3850413e5d3fe4e71cc4f32afb5c092a.dir
+      size: 2714293161
+      nfiles: 7
+    - path: src/components/03_data_transformation.py
+      hash: md5
+      md5: cffb0115cc76aa86a47bc56f1f27c42a
+      size: 72466
+    - path: src/constants/data_transformation_constant.py
+      hash: md5
+      md5: 94357cafb211de1c301265c9f80a81b9
+      size: 6070
+    - path: src/entity/data_transformation_artifact.py
+      hash: md5
+      md5: 30b044069fb45c2585a3f8dfeac9bde3
+      size: 1399
+    - path: validation_report/validation_report.yaml
+      hash: md5
+      md5: f524e173bb7788272c4c07ed1fcfb94c
+      size: 25
+    outs:
+    - path: artifact/interim
+      hash: md5
+      md5: 41d0c0b584d116c28fea1f7896914aed.dir
+      size: 231798359
+      nfiles: 1

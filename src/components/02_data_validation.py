@@ -6,10 +6,11 @@ import yaml
 from src.logger import config_logger
 from  src.utils.main_utils import *
 
-from src.entity.config_entity import *
+from src.entity.data_validation_artifact import *
 from src.entity.data_ingestion_artifact import *
 
 from src.constants import *
+from src.constants.data_validaton_constant import *
 from src.constants.data_ingestion_constants  import *
 
 
@@ -172,7 +173,7 @@ class DataValidation:
             - load csv from artifact dir
             - loads corresponding yaml schema file
             - perform validation methods
-        
+            
         '''
         
         try:
