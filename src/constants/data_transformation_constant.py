@@ -10,10 +10,10 @@ DATA_VALIDATION_YAML = 'D:/home loan credit risk/validation_report/validation_re
 PLACEHOLDERS = {
     'local_placeholder': 
     {
-        'DAYS_EMPLOYED':{365243:np.nan}
+        'YEARS_EMPLOYED':{ -1000.67:-99999}
     },
     
-    'global_placeholders':{"XNA": np.nan, "XAP": np.nan, "Unknown": np.nan}
+    'global_placeholders':{"XNA": 'Missing', "XAP": 'Missing', "Unknown": 'Missing'}
 }
 SIMPLIFY_VALUES = {
 'NAME_EDUCATION_TYPE':{'Secondary / secondary special':'Secondary education'},
