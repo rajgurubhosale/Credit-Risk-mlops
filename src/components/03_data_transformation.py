@@ -16,9 +16,47 @@ from src.entity.data_ingestion_artifact import *
 from src.entity.data_validation_artifact import *
 from src.constants.data_transformation_constant import *
 
+#both numerator and denominator missing placeholder
+DN_MISSING_PLACEHOLDER = - 99999
+#numerator missing
+N_MISSING_PLACEHOLDER = - 88888
+#denominator missing
+D_MISSING_PLACEHOLDER = - 77777
+
+# missing value placeholder 
 PLACEHOLDER = - 99999
 
+# loan but the data is missing
+DPD_LOAN_DATA_MISSING  = -88888
+
+
 logger = config_logger('03_data_transformation')
+
+
+class RatioFeatureMixin:
+    def _create_ratio_feature(self, df, numerator, denominator, feature_name):
+
+        temp = df[['SK_ID_CURR', numerator, denominator]].copy()
+
+        temp[feature_name] = np.select(
+            condlist=[
+                temp[numerator].isna() & temp[denominator].isna(),
+                temp[denominator].isna(),
+                temp[numerator].isna()
+            ],
+            choicelist=[
+                DN_MISSING_PLACEHOLDER,
+                D_MISSING_PLACEHOLDER,
+                N_MISSING_PLACEHOLDER
+            ],
+            default=np.where(
+                temp[denominator] == 0,
+                D_MISSING_PLACEHOLDER,
+                temp[numerator] / temp[denominator]
+            )
+        )
+
+        return temp[['SK_ID_CURR', feature_name]]
 
 class ApplicationDfTransformer:
     '''basic preprocessing of application main dataset
@@ -173,7 +211,7 @@ class BureauBalanceTransformation(BaseTransformer):
         )
         dpd_map = {'X':np.nan,'C':0,'1':1,'2':2,'3':3,'4':4,'5':5}
         self.bureau_balance['STATUS'] = self.bureau_balance['STATUS'].map(dpd_map)
-        self.new_features_cols = []
+        
     def _safe_join(self,base,new)-> pd.DataFrame:
         ''' helper function'''
         if base.empty:
@@ -203,10 +241,12 @@ class BureauBalanceTransformation(BaseTransformer):
             for frame in time_frames:
                 filt = self.bureau_balance['MONTHS_BALANCE'] >= -frame
                 temp = self.bureau_balance.loc[filt].copy()
-                feature_dpd = temp.groupby(by='SK_ID_BUREAU')['STATUS'].max().to_frame(f'WORST_DPD_BUREAU_{frame}M')
+                feature_dpd = temp.groupby(by='SK_ID_BUREAU')['STATUS'].max().to_frame(f'BB_WORST_DPD_{frame}M')
                 features.append(feature_dpd)
 
             features = pd.concat(features, axis=1).reset_index()
+            
+            features = features.fillna(DPD_LOAN_DATA_MISSING)
 
             bureau_agg = (
                 self.bureau[['SK_ID_BUREAU', 'SK_ID_CURR']]
@@ -218,8 +258,6 @@ class BureauBalanceTransformation(BaseTransformer):
             
             bureau_agg = bureau_agg.drop(columns='SK_ID_BUREAU')
             return bureau_agg
-
-
         else:
             logger.debug('STATUS : column is not present in the DataFrame')
            
@@ -246,11 +284,12 @@ class BureauBalanceTransformation(BaseTransformer):
             for frame in time_frames:
                 filt = (self.bureau_balance['MONTHS_BALANCE'] >= -frame) & (self.bureau_balance['STATUS'] >= 3)
                 temp = self.bureau_balance.loc[filt].copy()
-                feature_dpd = temp.groupby(by='SK_ID_BUREAU')['STATUS'].max().to_frame(f'SEVERE_DPD_BUREAU_{frame}M')
+                feature_dpd = temp.groupby(by='SK_ID_BUREAU')['STATUS'].max().to_frame(f'BB_SEVERE_DPD_{frame}M')
                 features.append(feature_dpd)
 
             features = pd.concat(features, axis=1).reset_index()
-
+            features = features.fillna(DPD_LOAN_DATA_MISSING)
+            
             bureau_agg = (
                 self.bureau[['SK_ID_BUREAU', 'SK_ID_CURR']]
                 .merge(features, on='SK_ID_BUREAU', how='left')
@@ -280,7 +319,7 @@ class BureauBalanceTransformation(BaseTransformer):
                         
             temp = self.bureau_balance.loc[self.bureau_balance['STATUS'] > 0]
 
-            features = (temp.groupby('SK_ID_BUREAU')['MONTHS_BALANCE'].max().to_frame('RECENT_MONTH_OF_DPD').reset_index())
+            features = (temp.groupby('SK_ID_BUREAU')['MONTHS_BALANCE'].max().to_frame('BB_RECENT_MONTH_OF_DPD').reset_index())
 
             bureau_agg = (
                 self.bureau[['SK_ID_BUREAU', 'SK_ID_CURR']]
@@ -306,16 +345,17 @@ class BureauBalanceTransformation(BaseTransformer):
 
             for extractor in features_extractors:
                 features_df = extractor()
+                # log the method is running
+                method_name = extractor.__name__
+                logger.info(f"Current Method Running: {self.__class__.__name__}.{method_name}")        
 
-
+               
                 main_df = main_df.merge(
                     features_df,
                     on='SK_ID_CURR',
                     how='left'
                 )
-                # log the method is running
-                method_name = extractor.__name__
-                logger.info(f"Running {self.__class__.__name__}.{method_name}")
+                
 
                 new_cols = features_df.columns.drop('SK_ID_CURR')
 
@@ -332,7 +372,7 @@ class BureauBalanceTransformation(BaseTransformer):
 
 
 
-class BureauTransformer(BaseTransformer):
+class BureauTransformer(BaseTransformer,RatioFeatureMixin):
     '''Extracts and Transform features from the bureau data. And append in the main dataframe'''
     def __init__(self, data_transformation_config: DataTransformationConfig, data_ingestion_config: DataIngestionConfig):
         '''Load the bureau dataset and save in the self.df dataframe'''
@@ -341,7 +381,8 @@ class BureauTransformer(BaseTransformer):
         self.df = self.load_data(
             data_path = self.data_ingestion_config.bureau_data,
             dtypes = self.data_transformation_config.bureau_dtypes_reduce
-        )
+        ).copy()
+        
     
     def _extract_num_credit_currencies(self):
 
@@ -354,8 +395,10 @@ class BureauTransformer(BaseTransformer):
                 features_df(pd.DataFrame): dataframe with SK_ID_CURR Index and Transformed features
         '''
         if 'CREDIT_CURRENCY' in self.df.columns:
-            feature_df = self.df.groupby(by='SK_ID_CURR')['CREDIT_CURRENCY'].nunique().to_frame('NUM_CREDIT_CURRENCIES')
+            feature_df = self.df.groupby(by='SK_ID_CURR')['CREDIT_CURRENCY'].nunique().to_frame('B_NUM_CREDIT_CURRENCIES')
 
+            # no currency -> 0
+            #no data availability -> placeholder
             feature_df = feature_df.fillna(0)
             return feature_df.reset_index()
 
@@ -393,7 +436,7 @@ class BureauTransformer(BaseTransformer):
                 crosstab = pd.crosstab(temp['SK_ID_CURR'],temp['CREDIT_ACTIVE'])
                     
 
-                active_credit = crosstab['Active'].to_frame().rename(columns={'Active':f'NUM_ACTIVE_CREDIT_{frame}D'})
+                active_credit = crosstab.get('Active', pd.Series(0, index=crosstab.index)).to_frame(f'B_NUM_ACTIVE_CREDIT_{frame}D')
 
                 if features_df.empty:
                     features_df = active_credit.copy()
@@ -422,11 +465,11 @@ class BureauTransformer(BaseTransformer):
    
             filt = self.df['CREDIT_ACTIVE'].isin(['Bad debt','Sold'])
             temp = self.df.loc[filt].copy()
-            features_df = temp.groupby(by='SK_ID_CURR')['DAYS_CREDIT'].max().to_frame('DAYS_SINCE_LAST_BAD_LOAN')
+            features_df = temp.groupby(by='SK_ID_CURR')['DAYS_CREDIT'].max().to_frame('B_DAYS_SINCE_LAST_BAD_LOAN')
             
             # converting it into positive number so i can use the -99999 placeholder later for the null values
-            features_df['DAYS_SINCE_LAST_BAD_LOAN'] = -features_df['DAYS_SINCE_LAST_BAD_LOAN']
-
+            features_df['B_DAYS_SINCE_LAST_BAD_LOAN'] = -features_df['B_DAYS_SINCE_LAST_BAD_LOAN']
+            
 
             return features_df.reset_index()
 
@@ -447,18 +490,12 @@ class BureauTransformer(BaseTransformer):
         '''
 
         if 'CREDIT_DAY_OVERDUE' in self.df.columns:
-                
-            # create a flag of overdue
-            self.df['HAS_CREDIT_DAYS_OVERDUE'] = 0
-            filt = self.df['CREDIT_DAY_OVERDUE'] != 0
-            self.df.loc[filt,'HAS_CREDIT_DAYS_OVERDUE'] = 1
-
-            # assgin nan if credit_day_overdue feature had nan values to flag feature
-            filt = self.df['CREDIT_DAY_OVERDUE'].isnull()
-            self.df.loc[filt,'HAS_CREDIT_DAYS_OVERDUE'] = np.nan
+            
+            self.df['B_HAS_CREDIT_DAYS_OVERDUE'] = np.where(
+            self.df['CREDIT_DAY_OVERDUE'].isna(), np.nan, (self.df['CREDIT_DAY_OVERDUE'] > 0).astype(int))
 
             # aggreagate
-            features_df = self.df.groupby('SK_ID_CURR')['HAS_CREDIT_DAYS_OVERDUE'].max().to_frame()
+            features_df = self.df.groupby('SK_ID_CURR')['B_HAS_CREDIT_DAYS_OVERDUE'].max().to_frame()
 
             return features_df.reset_index()
         else:
@@ -483,9 +520,9 @@ class BureauTransformer(BaseTransformer):
             new_df = self.df.loc[filt].copy()
             new_df['REPAYMENT_DAYS_DIFF'] = (new_df['DAYS_ENDDATE_FACT'] - new_df['DAYS_CREDIT_ENDDATE'])
             
-            features_df = new_df.groupby(by='SK_ID_CURR')['REPAYMENT_DAYS_DIFF'].agg(['mean','max']).rename(columns={"mean":"AVG_REPAYMENT_DAYS_DIFF",
-                 "max":"MAX_REPAYMENT_DAYS_DIFF"})
-                
+            features_df = new_df.groupby(by='SK_ID_CURR').agg( 
+                B_AVG_REPAYMENT_DAYS_DIFF = ('REPAYMENT_DAYS_DIFF','mean'),
+                B_MAX_REPAYMENT_DAYS_DIFF =   ('REPAYMENT_DAYS_DIFF','max'))
 
             return features_df.reset_index()
         else:
@@ -509,25 +546,23 @@ class BureauTransformer(BaseTransformer):
 
             temp = self.df[['SK_ID_CURR', 'AMT_CREDIT_MAX_OVERDUE']].copy()
   
-            temp['FLAG_HAS_AMT_OVERDUE'] = (temp['AMT_CREDIT_MAX_OVERDUE'] > 0 ).astype(int)
+            temp['B_FLAG_HAS_AMT_OVERDUE'] = (temp['AMT_CREDIT_MAX_OVERDUE'] > 0 ).astype(int)
             
             filt = temp['AMT_CREDIT_MAX_OVERDUE'].isnull()
-            temp.loc[filt,'FLAG_HAS_AMT_OVERDUE'] = np.nan
+            temp.loc[filt,'B_FLAG_HAS_AMT_OVERDUE'] = np.nan
             
-            features_df = temp.groupby(by='SK_ID_CURR')['FLAG_HAS_AMT_OVERDUE'].max().to_frame()
+            features_df = temp.groupby(by='SK_ID_CURR')['B_FLAG_HAS_AMT_OVERDUE'].max().to_frame()
             
-            max_overdue = temp.groupby(by='SK_ID_CURR')['AMT_CREDIT_MAX_OVERDUE'].max().to_frame('MAX_AMT_OVERDUE')
+            max_overdue = temp.groupby(by='SK_ID_CURR')['AMT_CREDIT_MAX_OVERDUE'].max().to_frame('B_MAX_AMT_OVERDUE')
             features_df = features_df.join(max_overdue,how='outer')
             return features_df.reset_index()
         else:
             logger.debug('AMT_CREDIT_MAX_OVERDUE: column is not present in the DataFrame')
 
-
     def _cnt_credit_prolong(self):
         ''' Extract features from the 'CNT_CREDIT_PROLONG' column in the bureau dataframe.
     
             Features Transformed:
-            - FLAG_HAS_CREDIT_PROLONG: flag if the customer credit prolong
             - MAX_CREDIT_PROLONG: max credit prolong for the customer
 
             Returns:
@@ -536,16 +571,9 @@ class BureauTransformer(BaseTransformer):
 
         if 'CNT_CREDIT_PROLONG' in self.df.columns:
 
-            self.df['FLAG_HAS_CREDIT_PROLONG'] = np.where(    
-            self.df['CNT_CREDIT_PROLONG'].isnull(),
-            np.nan,
-            (self.df['CNT_CREDIT_PROLONG'] > 0).astype(int)
-            )
+            max_prolong = self.df.groupby(by='SK_ID_CURR')['CNT_CREDIT_PROLONG'].max().to_frame('B_MAX_CREDIT_PROLONG').reset_index()
             
-            features_df =self.df.groupby(by='SK_ID_CURR')['FLAG_HAS_CREDIT_PROLONG'].max().to_frame()
-            max_prolong = self.df.groupby(by='SK_ID_CURR')['CNT_CREDIT_PROLONG'].max().to_frame('MAX_CREDIT_PROLONG')
-            features_df = features_df.join(max_prolong,how='outer')
-            return features_df.reset_index()
+            return max_prolong
            
         else:
             logger.debug('CNT_CREDIT_PROLONG: column is not present in the DataFrame')
@@ -565,26 +593,18 @@ class BureauTransformer(BaseTransformer):
 
 
         if ('AMT_CREDIT_SUM_DEBT' in self.df.columns) and ('AMT_CREDIT_SUM' in self.df.columns):
-
-            #loan to debt ratio
-            self.df['DEBT_TO_LOAN_RATIO'] = np.where(
-                (self.df['CREDIT_ACTIVE'] =='Active') & (self.df['AMT_CREDIT_SUM'] !=0),
-                self.df['AMT_CREDIT_SUM_DEBT'] / self.df['AMT_CREDIT_SUM'],
-                0
-                )
-            filt = (self.df['AMT_CREDIT_SUM'].isnull()) | (self.df['AMT_CREDIT_SUM_DEBT'].isnull())
-
-            self.df.loc[filt,'DEBT_TO_LOAN_RATIO'] = np.nan
-
-            features_df = self.df.groupby(by='SK_ID_CURR')['DEBT_TO_LOAN_RATIO'].mean().to_frame()
+            
+            
+            feature_df = self._create_ratio_feature(self.df,'AMT_CREDIT_SUM_DEBT','AMT_CREDIT_SUM','B_RATIO_DEBT_TO_LOAN' )
+            feature_df = feature_df.reset_index()
+            
+            features_df = feature_df.groupby(by='SK_ID_CURR')['B_RATIO_DEBT_TO_LOAN'].mean().to_frame().reset_index()
 
             # avg loan amount of previous all options!
-            features_df_2 = self.df.groupby(by='SK_ID_CURR')['AMT_CREDIT_SUM'].mean().to_frame()
-            features_df_2 = features_df_2.rename(columns={'AMT_CREDIT_SUM':'AVG_AMT_CREDIT_SUM'})
-
+            features_df_2 = self.df.groupby(by='SK_ID_CURR')['AMT_CREDIT_SUM'].mean().to_frame('B_AVG_AMT_CREDIT_SUM').reset_index()
             features_df = features_df.merge(features_df_2,on='SK_ID_CURR',how='outer')
 
-            return features_df.reset_index()
+            return features_df
 
         else:
             logger.debug('DEBT_TO_LOAN_RATIO ,AMT_CREDIT_SUM : column is not present in the DataFrame')
@@ -600,7 +620,7 @@ class BureauTransformer(BaseTransformer):
         '''
         
         if 'CREDIT_TYPE' in self.df.columns:
-            self.df['HAS_CREDIT_LOAN'] = np.where(
+            self.df['B_HAS_CREDIT_LOAN'] = np.where(
             self.df['CREDIT_TYPE'] == 'Credit card',
                 1,
                 0
@@ -608,9 +628,9 @@ class BureauTransformer(BaseTransformer):
             filt = self.df['CREDIT_TYPE'].isnull()
             self.df.loc[filt,'HAS_CREDIT_LOAN'] = np.nan
             
-            features_df = self.df.groupby('SK_ID_CURR')['HAS_CREDIT_LOAN'].max().to_frame()
+            features_df = self.df.groupby('SK_ID_CURR')['B_HAS_CREDIT_LOAN'].max().to_frame().reset_index()
 
-            return features_df.reset_index()
+            return features_df
         else:
             logger.debug('CREDIT_TYPE : column is not present in the DataFrame')
 
@@ -634,12 +654,17 @@ class BureauTransformer(BaseTransformer):
             self.main_df  = main_df
 
             for extractor in self.feature_extractors:
-                features_df = extractor()
-                self.main_df = self.main_df.merge(features_df,on='SK_ID_CURR',how='left')
-
+                
                 # log the method is running
                 method_name = extractor.__name__
-                logger.info(f"Running {self.__class__.__name__}.{method_name}")
+                logger.info(f"Current Method Running: {self.__class__.__name__}.{method_name}")        
+
+                
+                features_df = extractor()
+                
+                            
+                self.main_df = self.main_df.merge(features_df,on='SK_ID_CURR',how='left')
+                
                 
                 new_cols = features_df.columns.drop('SK_ID_CURR')
                 self.main_df[new_cols] = self.main_df[new_cols].fillna(PLACEHOLDER)
@@ -653,16 +678,25 @@ class BureauTransformer(BaseTransformer):
 
 
 
-class InstallmentsPaymentsTransformation(BaseTransformer):
+class InstallmentsPaymentsTransformation(BaseTransformer,RatioFeatureMixin):
     def __init__(self, data_transformation_config: DataTransformationConfig, data_ingestion_config: DataIngestionConfig):
         super().__init__(data_transformation_config, data_ingestion_config)
-
 
         self.df = self.load_data(
             self.data_ingestion_config.installment_payments_data,
             self.data_transformation_config.installment_payment_dtypes_reduce
             )
-      
+        
+        self.df['PAY_DAYS_DIFF'] = self.df['DAYS_ENTRY_PAYMENT'] - self.df['DAYS_INSTALMENT']
+
+        
+    def _safe_join(self,base,new)-> pd.DataFrame:
+        ''' helper function'''
+        if base.empty:
+            return new
+        else:
+            return base.join(new, how='outer')
+
 
         
     def _extract_number_of_reshedules_tp(self):
@@ -681,27 +715,24 @@ class InstallmentsPaymentsTransformation(BaseTransformer):
             time_frames = [360, 720, 1080, 1440, 1800, 2160]  # 1Y, 2Y, 3Y, 4Y, 5Y, 6Y
             features_df = pd.DataFrame()
             for frame in time_frames:
-                filt = (self.df['DAYS_INSTALMENT'] >= -frame) & (self.df['NUM_INSTALMENT_VERSION']!=0)
+                filt = (
+                    (self.df['DAYS_INSTALMENT'] <= 0) &
+                    (self.df['DAYS_INSTALMENT'] >= -frame) &
+                    (self.df['NUM_INSTALMENT_VERSION'] != 0)
+                )
+                
                 filt_df = self.df.loc[filt].copy()
-                temp = (filt_df.groupby(['SK_ID_CURR','SK_ID_PREV'])['NUM_INSTALMENT_VERSION'].max()-1).to_frame()
+                temp = (filt_df.groupby(['SK_ID_CURR','SK_ID_PREV'])['NUM_INSTALMENT_VERSION'].max().sub(1)).to_frame()
 
                 temp = temp.groupby('SK_ID_CURR').sum()
                 temp = temp.clip(lower=0)
-                feature_df = temp.rename(columns={'NUM_INSTALMENT_VERSION':f'NUMBER_OF_RESHEDULES_{frame}D'})
-
-                 # assign 0 where the num_installment dats are greater than 180 or number of reshedule is 0
+                feature_df = temp.rename(columns={'NUM_INSTALMENT_VERSION':f'IP_NUM_OF_RESHEDULES_{frame}D'})
+                features_df = self._safe_join(features_df,feature_df)
             
-                if features_df.empty:
-                    features_df = feature_df
-                else:
-                    features_df =  features_df.join(feature_df,how='outer')
-
             all_cust_index = self.df['SK_ID_CURR'].sort_values().unique()
             features_df = features_df.reindex(all_cust_index,fill_value=0)
-
             return features_df
            
-    
         else:
             logger.debug('NUM_INSTALMENT_VERSION & DAYS_INSTALMENT : column is not present in the DataFrame')
 
@@ -717,21 +748,19 @@ class InstallmentsPaymentsTransformation(BaseTransformer):
 
             Returns:
             - feature_df : 
-                DataFrame with SK_ID_CURR as index and aggregate PAY_RATIO features
+                DataFrame with SK_ID_CURR as
+                index and aggregate PAY_RATIO features
                 Missing values filled with the placeholder -99999
         '''
-
         if 'AMT_PAYMENT' in self.df.columns and 'AMT_INSTALMENT' in self.df.columns:
             
-            self.df['PAY_RATIO'] = np.where(self.df['AMT_PAYMENT']!=0,
-                     self.df['AMT_PAYMENT'] / self.df['AMT_INSTALMENT'],
-                     np.nan
-                     )
+            feature_df = self._create_ratio_feature(self.df,'AMT_PAYMENT','AMT_INSTALMENT','IP_RATIO_PAYMENT_INSTALMENT')
+          
             
-            features_df = self.df.groupby(by='SK_ID_CURR')['PAY_RATIO'].agg(['mean','min','max']).rename(columns={
-                "mean":"AVG_PAY_RATIO",
-                "min":"MIN_PAY_RATIO",
-                "max":"MAX_PAY_RATIO"
+            features_df = feature_df.groupby(by='SK_ID_CURR')['IP_RATIO_PAYMENT_INSTALMENT'].agg(['mean','min','max']).rename(columns={
+                "mean":"IP_AVG_RATIO_PAYMENT_INSTALMENT",
+                "min":"IP_MIN_RATIO_PAYMENT_INSTALMENT",
+                "max":"IP_MAX_RATIO_PAYMENT_INSTALMENT"
             })
 
             return features_df
@@ -744,30 +773,35 @@ class InstallmentsPaymentsTransformation(BaseTransformer):
         ''' Extract the early payments ratio and earliest pay flag (3m) from the previous installments dataset
     
             Features Transformed:
-            - RATIO_EARLY_PAYMENTS: the ratio of the total payments with payment that is paid before the installment date.
-            - RECENT_EARLY_PAYMENT_FLAG_3M : the flag if the person has paid installment early in last 3 months.
-
+            - IP_RATIO_EARLY_PAYMENTS_{frame}D: the ratio of the total payments with payment that is paid before the installment date.
+            - IP_RECENT_EARLY_PAYMENT_FLAG_3M : the flag if the person has paid installment early in last 3 months.
+            
             Returns:
                 features_df(pd.DataFrame): DataFrame with SK_ID_CURR Index and Transformed features
         '''
-        
+       
         if 'DAYS_ENTRY_PAYMENT' in self.df.columns and 'DAYS_INSTALMENT' in self.df.columns:
+
+            self.df['FLAG_EARLY_PAYMENT'] = (self.df['PAY_DAYS_DIFF'] < 0).astype(int)
+
+            time_frames = [90, 180, 270, 360, 720, 1080, 2160, 2880]
             
-            # ratio of early payments
-            self.df['PAY_DAYS_DIFF'] = self.df['DAYS_ENTRY_PAYMENT']- self.df['DAYS_INSTALMENT']
-
-            self.df['FLAG_PAYMENT_EARLY'] = np.where(self.df['PAY_DAYS_DIFF'] < 0,1,0)
-
-
-            features_df_1 = self.df.groupby(by='SK_ID_CURR')['FLAG_PAYMENT_EARLY'].mean().to_frame('RATIO_EARLY_PAYMENTS')
+            features_df = pd.DataFrame()
+            for frame in time_frames:
+                filt = (self.df['DAYS_INSTALMENT'] <= 0) & (self.df['DAYS_INSTALMENT'] >= -frame)
+                filt_df = self.df.loc[filt].copy()
+                
+                feature_ratio = filt_df.groupby(by='SK_ID_CURR')['FLAG_EARLY_PAYMENT'].mean().to_frame(f'IP_RATIO_EARLY_PAYMENTS_{frame}D')
+                
+                features_df = self._safe_join(features_df,feature_ratio)
             
-
+            # features_df    
             # recent early payment 3M
-            self.df['RECENT_EARLY_PAYMENT_FLAG_3M'] = np.where(
-                    ((self.df['FLAG_PAYMENT_EARLY'] == 1) & (self.df['DAYS_INSTALMENT'] >= -90)),1, 0)
+            self.df['IP_RECENT_EARLY_PAYMENT_FLAG_3M'] = np.where(
+                    ((self.df['FLAG_EARLY_PAYMENT'] == 1) & (self.df['DAYS_INSTALMENT'] >= -90)),1, 0)
             
-            features_df_2 = self.df.groupby(by='SK_ID_CURR')['RECENT_EARLY_PAYMENT_FLAG_3M'].max().to_frame()
-            features_df = features_df_1.merge(features_df_2,on='SK_ID_CURR',how='outer')
+            features_df_2 = self.df.groupby(by='SK_ID_CURR')['IP_RECENT_EARLY_PAYMENT_FLAG_3M'].max().to_frame()
+            features_df = features_df.merge(features_df_2,on='SK_ID_CURR',how='outer')
             return features_df
         else:
             logger.debug('DAYS_ENTRY_PAYMENT or DAYS_INSTALMENT : column is not present in the DataFrame')
@@ -793,22 +827,19 @@ class InstallmentsPaymentsTransformation(BaseTransformer):
             time_frames = [90, 180, 270, 360, 720, 1080, 2160, 2880]
             # empty dataframe to apend the feature into
             
-            self.df['PAY_DAYS_DIFF'] = self.df['DAYS_ENTRY_PAYMENT']- self.df['DAYS_INSTALMENT']
 
             features_df = pd.DataFrame()
             for frame in time_frames:
                 filt  = (self.df['PAY_DAYS_DIFF']>= 0) & (self.df['DAYS_INSTALMENT'] > -frame)
-                filt_df_frame = self.df.loc[filt]
+                filt_df_frame = self.df.loc[filt].copy()
 
-                feature_dpd = filt_df_frame.groupby('SK_ID_CURR')['PAY_DAYS_DIFF'].max().to_frame(f'WORST_DPD_INSTALLMENT_PAYMENTS_{frame}D')
-
-                if features_df.empty:
-                    features_df = feature_dpd
-                else:
-                    features_df =  features_df.join(feature_dpd,how='outer')
+                feature_dpd = filt_df_frame.groupby('SK_ID_CURR')['PAY_DAYS_DIFF'].max().to_frame(f'IP_WORST_DPD_{frame}D')
+                
+                features_df = self._safe_join(features_df,feature_dpd)
+            
+            features_df = features_df.fillna(DPD_LOAN_DATA_MISSING) #-88888
             
             return features_df
-
     
         else:
             logger.debug('DAYS_ENTRY_PAYMENT or DAYS_INSTALMENT : column is not present in the DataFrame')
@@ -828,9 +859,12 @@ class InstallmentsPaymentsTransformation(BaseTransformer):
             
             time_frames = [180, 360, 720, 1080, 2160, 2880]
             features_df = pd.DataFrame()
+
             for frame in time_frames:
-                filt  = (self.df['DAYS_INSTALMENT'] > -frame)
-                filt_df = self.df.loc[filt]
+                
+                filt  = (self.df['PAY_DAYS_DIFF']>= 0) & (self.df['DAYS_INSTALMENT'] > -frame)
+
+                filt_df = self.df.loc[filt].copy()
                 
                 filt_df = filt_df.groupby(['SK_ID_CURR','SK_ID_PREV','NUM_INSTALMENT_NUMBER'])[['AMT_INSTALMENT','AMT_PAYMENT']].sum()
 
@@ -838,26 +872,25 @@ class InstallmentsPaymentsTransformation(BaseTransformer):
 
                 num_underpaid_installments = filt_df.groupby('SK_ID_CURR')['NUM_UNDERPAID_INSTALLMENTS'].sum().to_frame(f'NUM_UNDERPAID_INSTALLMENTS_{frame}D')
 
-
-                if features_df.empty:
-                    features_df = num_underpaid_installments
-                else:
-                    features_df =  features_df.join(num_underpaid_installments,how='outer').fillna(0).astype(int)
+                features_df = self._safe_join(features_df,num_underpaid_installments)                
             
+            all_cust_index = self.df['SK_ID_CURR'].unique()
+            features_df = features_df.reindex(all_cust_index, fill_value=0)            
             return features_df
         
         else:
             logger.debug('AMT_INSTALMENT or AMT_PAYMENT : column is not present in the DataFrame')
 
+
     def _extract_agg_pay_diff(self):
         ''' aggregate min,max,sum,mean  of the PAY_DIFF and extract them
     
             Features Transformed:
-            - "SUM_PAY_DIFF": sum of the total pay_diff
-            - "MEAN_PAY_DIFF": mean of the total pay_diff
-            - "MIN_PAY_DIFF": min of the total pay_diff
-            - "MAX_PAY_DIFF": max of the total pay_diff
-
+            - "IP_MIN_RATIO_INSTALMENT_PAYMENT": min of the total pay_diff
+            - "IP_MAX_RATIO_INSTALMENT_PAYMENT": sum of the total pay_diff
+            - "IP_SUM_RATIO_INSTALMENT_PAYMENT": max of the total pay_diff
+            - "IP_MEAN_RATIO_INSTALMENT_PAYMENT": mean of the total pay_diff
+            
             Returns:
                 DataFrame with SK_ID_CURR as index and aggregated features of the payment difference
         '''
@@ -870,12 +903,11 @@ class InstallmentsPaymentsTransformation(BaseTransformer):
             filt_df['PAY_DIFF'] = filt_df['AMT_INSTALMENT'] - filt_df['AMT_PAYMENT']
 
             features_df =  filt_df.groupby(by='SK_ID_CURR')['PAY_DIFF'].agg(['mean','min','max','sum']).rename(columns= {
-                "mean":"MEAN_PAY_DIFF",
-                "min":"MIN_PAY_DIFF",
-                "max":"MAX_PAY_DIFF",
-                "sum":"SUM_PAY_DIFF"
+                "mean":"IP_MEAN_RATIO_INSTALMENT_PAYMENT",
+                "min":"IP_MIN_RATIO_INSTALMENT_PAYMENT",
+                "max":"IP_MAX_RATIO_INSTALMENT_PAYMENT",
+                "sum":"IP_SUM_RATIO_INSTALMENT_PAYMENT"
                 })
-
 
             return features_df
         
@@ -897,10 +929,14 @@ class InstallmentsPaymentsTransformation(BaseTransformer):
 
             self.main_df = main_df
             for extractor in self.feature_extractors:
+                 # log the method is running
                 method_name = extractor.__name__
+                logger.info(f"Current Method Running: {self.__class__.__name__}.{method_name}")        
 
+                
                 features_df = extractor()
-                logger.info(f"Running {self.__class__.__name__}.{method_name}")
+                
+                       
 
                 features_cols = features_df.columns.to_list()
 
@@ -924,29 +960,50 @@ class PosCashBalanceTransformation(BaseTransformer):
             self.data_ingestion_config.pos_cash_data,
             self.data_transformation_config.pos_cash_reduce_dtypes
         )
+        self.all_cust_index = self.df['SK_ID_CURR'].unique()
+
+    
+    def _safe_join(self,base,new)-> pd.DataFrame:
+        ''' helper function'''
+        if base.empty:
+            return new
+        else:
+            return base.join(new, how='outer')
 
 
     def _extract_has_risky_contract_status(self):
         ''' Extract features from the 'NAME_CONTRACT_STATUS  from the pos_cash_balance dataset.
     
             Features Transformed:
-            - HAS_RISKY_CONTRACT_STATUS: flag the customer who had the NAME_CONTRACT_STATUS 'Demand','Amortized debt','Returned to the store'.
-
+            - PCB_FLAG_RISKY_CONTRACT_STATUS_{XM}: Flag if the customer had any risky contract status in the last X months. NAME_CONTRACT_STATUS 'Demand','Amortized debt','Returned to the store'.
+            - PCB_RATIO_RISKY_STATUS_{XM}: Ratio of risky contract statuses over total records in the last X months.
             Returns:
                 features_df(pd.DataFrame): DataFrame with SK_ID_CURR Index and Transformed features
             '''
         
         if 'NAME_CONTRACT_STATUS' in self.df.columns :
-
+            time_frames = [3,6,9,12,24] # 3,6,9,12,24 Months
             risky_categories = ['Demand','Amortized debt','Returned to the store']
             
-            self.df['HAS_RISKY_CONTRACT_STATUS'] = np.where(self.df['NAME_CONTRACT_STATUS'].isin(risky_categories),
+            self.df['PCB_FLAG_RISKY_CONTRACT_STATUS'] = np.where(self.df['NAME_CONTRACT_STATUS'].isin(risky_categories),
                     1,
                     0)
-
-            feature_df = self.df.groupby('SK_ID_CURR')['HAS_RISKY_CONTRACT_STATUS'].max().to_frame()
-            
-            return feature_df
+            features_df = pd.DataFrame()
+            for frame in time_frames:
+                filt_df = self.df[(self.df['MONTHS_BALANCE'] >= -frame) & (self.df['MONTHS_BALANCE'] <= 0)]
+                
+                agg_df = filt_df.groupby('SK_ID_CURR').agg(
+                    PCB_FLAG_RISKY_CONTRACT_STATUS=('PCB_FLAG_RISKY_CONTRACT_STATUS','max'),
+                    PCB_RATIO_RISKY_STATUS= ('PCB_FLAG_RISKY_CONTRACT_STATUS','mean')
+                    )
+                agg_df = agg_df.rename(columns={'PCB_FLAG_RISKY_CONTRACT_STATUS':f'PCB_FLAG_RISKY_CONTRACT_STATUS_{frame}M','PCB_RATIO_RISKY_STATUS':f'PCB_RATIO_RISKY_STATUS_{frame}M'})
+                agg_df  = agg_df.reset_index()
+                if features_df.empty:
+                    features_df = agg_df
+                else:
+                    features_df = features_df.merge(agg_df,on='SK_ID_CURR',how='outer')
+                
+            return features_df
         
         else:
             logger.debug('NAME_CONTRACT_STATUS : column is not present in the DataFrame')
@@ -963,13 +1020,14 @@ class PosCashBalanceTransformation(BaseTransformer):
             '''
         
         if 'NAME_CONTRACT_STATUS' in self.df.columns  and 'MONTHS_BALANCE' in self.df.columns:
-            time_frames = [3,9,12,24]
+            time_frames = [3,6,9,12,24]
             features_df = pd.DataFrame()
 
             for frame in time_frames:
 
-                filt_df = self.df[self.df['MONTHS_BALANCE'] >= -frame].copy()
-               
+                filt_df = self.df[(self.df['MONTHS_BALANCE'] >= -frame) & 
+                                (self.df['MONTHS_BALANCE'] <= 0)]  
+                            
                 # vectorized flags
                 filt_df['IS_ACTIVE'] = filt_df['NAME_CONTRACT_STATUS'].eq('Active')
                 filt_df['IS_COMPLETED'] = filt_df['NAME_CONTRACT_STATUS'].eq('Completed')
@@ -979,15 +1037,15 @@ class PosCashBalanceTransformation(BaseTransformer):
                 # Active AND not Completed loans
                 valid_loans = loan_status[(loan_status['IS_ACTIVE']) & (~loan_status['IS_COMPLETED'])]
                 valid_loans = valid_loans.reset_index()
-                feature_df = valid_loans.groupby('SK_ID_CURR')['SK_ID_PREV'].nunique().to_frame(f'NUM_ACTIVE_LOANS_{frame}M')
+                feature_df = valid_loans.groupby('SK_ID_CURR')['SK_ID_PREV'].nunique().to_frame(f'PCB_NUM_ACTIVE_LOANS_{frame}M')
 
                 if features_df.empty:
                     features_df = feature_df
                 else:
-                    features_df = features_df.join(feature_df,how='outer')
+                    features_df = features_df.merge(feature_df,on='SK_ID_CURR',how='outer')
 
-            all_cust_index = self.df['SK_ID_CURR'].unique()
-            features_df = features_df.reindex(all_cust_index,fill_value=0)    
+            features_df = features_df.reindex(self.all_cust_index,fill_value=0)  
+  
                 
             return features_df
         
@@ -1008,14 +1066,15 @@ class PosCashBalanceTransformation(BaseTransformer):
         if 'CNT_INSTALMENT_FUTURE' in self.df.columns:
 
             filt_df = self.df[(self.df['MONTHS_BALANCE'] ==-1) & self.df['NAME_CONTRACT_STATUS'].isin(['Active','Signed'])]            
-            feature_df = filt_df.groupby(by='SK_ID_CURR')['CNT_INSTALMENT_FUTURE'].sum().to_frame()
-            feature_df = feature_df.rename(columns={'CNT_INSTALMENT_FUTURE':'TOTAL_REMAINING_INSTALLMENTS'})
-            all_cust_index = self.df['SK_ID_CURR'].sort_values().unique()
-            feature_df = feature_df.reindex(all_cust_index,fill_value=0)
+            feature_df = filt_df.groupby(by='SK_ID_CURR')['CNT_INSTALMENT_FUTURE'].sum().to_frame(f'PCB_TOTAL_REMAINING_INSTALLMENTS')
+            feature_df = feature_df.reset_index()
+            feature_df = feature_df.reindex(self.all_cust_index,fill_value=0)
+
             return feature_df 
 
         else:
             logger.debug('CNT_INSTALMENT_FUTURE : column is not present in the DataFrame')
+            
 
     def _extract_worst_dpd_features_pos_cash(self):
         '''  Create worst DPD (Days Past Due) features for multiple time frames 
@@ -1038,14 +1097,15 @@ class PosCashBalanceTransformation(BaseTransformer):
             for frame in time_frames:
                 filt = self.df['MONTHS_BALANCE'] >= -frame
                 temp = self.df.loc[filt].copy()
-                feature_dpd = temp.groupby(by='SK_ID_CURR')['SK_DPD'].max().to_frame(f'WORST_DPD_POS_CASH_{frame}M')
+                feature_dpd = temp.groupby(by='SK_ID_CURR')['SK_DPD'].max().to_frame(f'PCB_WORST_DPD_POS_CASH_{frame}M').reset_index()
                 
                 if features_df.empty:
                     features_df = feature_dpd
                 else:
-                    features_df =  features_df.join(feature_dpd,how='outer')
+                    features_df = features_df.merge(feature_dpd,on='SK_ID_CURR',how='outer')
 
-            features_df = features_df.sort_index()
+            features_df = features_df.fillna(DPD_LOAN_DATA_MISSING) # -88888
+                
             return features_df
         else:
             logger.debug('STATUS : column is not present in the DataFrame')
@@ -1068,16 +1128,17 @@ class PosCashBalanceTransformation(BaseTransformer):
             features_df = pd.DataFrame()
 
             for frame in time_frames:
-                filt = self.df['MONTHS_BALANCE'] >= -frame
+                filt = (self.df['MONTHS_BALANCE'] >= -frame) & (self.df['MONTHS_BALANCE'] <= 0)
                 temp = self.df.loc[filt].copy()
-                feature_dpd = temp.groupby(by='SK_ID_CURR')['SK_DPD_DEF'].max().to_frame(f'WORST_DPD_DEF_POS_CASH_{frame}M')
+                feature_dpd = temp.groupby(by='SK_ID_CURR')['SK_DPD_DEF'].max().to_frame(f'WORST_DPD_DEF_POS_CASH_{frame}M').reset_index()
+                
                 
                 if features_df.empty:
                     features_df = feature_dpd
                 else:
-                    features_df =  features_df.join(feature_dpd,how='outer')
+                    features_df = features_df.merge(feature_dpd,on='SK_ID_CURR',how='outer')
 
-            features_df = features_df.sort_index()
+            features_df = features_df.fillna(DPD_LOAN_DATA_MISSING) # -88888
             return features_df
         else:
             logger.debug('STATUS and SK_DPD_DEF: column is not present in the DataFrame')
@@ -1098,11 +1159,18 @@ class PosCashBalanceTransformation(BaseTransformer):
            
             self.main_df = main_df
             for extractor in self.feature_extractors:
-                features_df = extractor()
-                features_cols = features_df.columns.to_list()
+                
                 # log the method is running
                 method_name = extractor.__name__
-                logger.info(f"Running {self.__class__.__name__}.{method_name}")
+                logger.info(f"Current Method Running: {self.__class__.__name__}.{method_name}")        
+
+                
+                features_df = extractor()
+                
+                       
+                features_cols = features_df.columns.to_list()
+                
+                
                 self.main_df = self.main_df.merge(features_df,on='SK_ID_CURR',how='left')
                 self.main_df[features_cols] = self.main_df[features_cols].fillna(PLACEHOLDER)
 
@@ -1114,9 +1182,7 @@ class PosCashBalanceTransformation(BaseTransformer):
             raise MyException(e,sys,logger)
 
 
-
-
-class PreviousApplicationsTransformation(BaseTransformer):
+class PreviousApplicationsTransformation(BaseTransformer,RatioFeatureMixin):
 
     def __init__(self, data_transformation_config: DataTransformationConfig, data_ingestion_config: DataIngestionConfig):
        super().__init__(data_transformation_config, data_ingestion_config)
@@ -1132,7 +1198,8 @@ class PreviousApplicationsTransformation(BaseTransformer):
             return new
         else:
             return base.join(new, how='outer')
-        
+   
+    
     def _extract_flag_has_credit_history(self):
 
         ''' flag the client if the client have any credit card history from the previous application dataset
@@ -1146,14 +1213,13 @@ class PreviousApplicationsTransformation(BaseTransformer):
         required_cols = {'NAME_PORTFOLIO'}
         if required_cols.issubset(self.df.columns):
 
-            self.df['FLAG_HAS_CREDIT_CARD_HISTORY'] = (self.df['NAME_PORTFOLIO'] =='Credit').astype(int)
-            feature_df = self.df.groupby('SK_ID_CURR')['FLAG_HAS_CREDIT_CARD_HISTORY'].max().to_frame()
-
+            self.df['PA_FLAG_HAS_CREDIT_CARD_HISTORY'] = (self.df['NAME_PORTFOLIO'] =='Credit').astype(int)
+            feature_df = self.df.groupby('SK_ID_CURR')['PA_FLAG_HAS_CREDIT_CARD_HISTORY'].max().to_frame()
+            
             return feature_df
 
         else:
             logger.debug(" NAME_PORTFOLIO column are not present in the DataFrame")   
-    #new
 
     def _extract_annuity_features(self):
         '''
@@ -1185,15 +1251,27 @@ class PreviousApplicationsTransformation(BaseTransformer):
                     SUM_AMT_ANNUITY=('AMT_ANNUITY', 'sum')
                     ).reset_index()
 
-            
-                agg_df[f'AMT_CREDIT_TO_ANNUITY_RATIO'] = agg_df['SUM_AMT_CREDIT'] / agg_df['SUM_AMT_ANNUITY']
+                ## ratio 
+                agg_df['AMT_CREDIT_TO_ANNUITY_RATIO'] = np.select(
+                condlist=[
+                agg_df['SUM_AMT_CREDIT'].isna() & agg_df['SUM_AMT_ANNUITY'].isna(),
+                agg_df['SUM_AMT_ANNUITY'].isna(),
+                agg_df['SUM_AMT_CREDIT'].isna()
+                ],
+                choicelist=[
+                    DN_MISSING_PLACEHOLDER,
+                    D_MISSING_PLACEHOLDER,
+                    N_MISSING_PLACEHOLDER
+                ],
+                default = agg_df['SUM_AMT_CREDIT'] / agg_df['SUM_AMT_ANNUITY'] 
+                )
 
                 agg_df.rename(columns={
-                    'AMT_CREDIT_TO_ANNUITY_RATIO':f'AMT_CREDIT_TO_ANNUITY_RATIO_{category.upper()}',
-                    'AVG_AMT_ANNUITY':f'AVG_AMT_ANNUITY_{category.upper()}'
+                    'AMT_CREDIT_TO_ANNUITY_RATIO':f'PA_RATIO_AMT_CREDIT_TO_ANNUITY_{category.upper()}',
+                    'AVG_AMT_ANNUITY':f'PA_AVG_AMT_ANNUITY_{category.upper()}'
                 },inplace=True)
                 
-                feature_df = agg_df[['SK_ID_CURR',f'AMT_CREDIT_TO_ANNUITY_RATIO_{category.upper()}',f'AVG_AMT_ANNUITY_{category.upper()}']]
+                feature_df = agg_df[['SK_ID_CURR',f'PA_RATIO_AMT_CREDIT_TO_ANNUITY_{category.upper()}',f'PA_AVG_AMT_ANNUITY_{category.upper()}']]
 
                 if features_df.empty:
                     features_df = feature_df
@@ -1227,10 +1305,11 @@ class PreviousApplicationsTransformation(BaseTransformer):
                     filt = ((self.df['NAME_PORTFOLIO'] == category) & (self.df['DAYS_DECISION'] > - frame))
                     filt_df = self.df.loc[filt].copy()
 
-                    feature_df = filt_df.groupby(by='SK_ID_CURR')['SK_ID_PREV'].nunique().to_frame(f'NUM_LOANS_{category}_{frame}D')
+                    feature_df = filt_df.groupby(by='SK_ID_CURR')['SK_ID_PREV'].nunique().to_frame(f'PA_NUM_LOANS_{category}_{frame}D')
                     
                     features_df = self._safe_join(features_df,feature_df)
 
+            features_df = features_df.reset_index()
             return features_df.fillna(0)
         
         else:
@@ -1240,15 +1319,15 @@ class PreviousApplicationsTransformation(BaseTransformer):
         ''' Extract features from the 'AMT_CREDIT' in the previous application dataset.
 
             Features Transformed:
-            - AVG_AMT_CREDIT_CLIENT:  average credit amount allocated  per client 
+            - PA_AVG_AMT_CREDIT_CLIENT:  average credit amount allocated  per client 
 
             Returns:
                 features_df(pd.DataFrame): DataFrame with SK_ID_CURR Index and Transformed features
         '''
         if 'AMT_CREDIT' in self.df.columns :
             # AMT_CREDIT means the actual amount of loan the client gets approved
-            feature_df = self.df.groupby(by='SK_ID_CURR')['AMT_CREDIT'].mean().to_frame()
-            feature_df = feature_df.rename(columns={'AMT_CREDIT':'AVG_AMT_CREDIT_CLIENT'})
+            feature_df = self.df.groupby(by='SK_ID_CURR')['AMT_CREDIT'].mean().to_frame('PA_AVG_AMT_CREDIT_CLIENT')
+            
             return feature_df
         
         else:
@@ -1260,7 +1339,7 @@ class PreviousApplicationsTransformation(BaseTransformer):
             from previous application dataset
 
             Features Transformed:
-            - AVG_CREDIT_APPLICATION_RATIO:  AMT_CREDIT / AMT_APPLICATION and the average of this value per customer
+            - PA_RATIO_CREDIT_APPLICATION{X}:  AMT_CREDIT / AMT_APPLICATION and the average of this value per customer
 
             Returns:
                 features_df(pd.DataFrame): DataFrame with SK_ID_CURR Index and Transformed features
@@ -1277,12 +1356,26 @@ class PreviousApplicationsTransformation(BaseTransformer):
                     SUM_AMT_CREDIT = ('AMT_CREDIT','sum'),
                     SUM_AMT_APPLICATION= ('AMT_APPLICATION','sum')
                 )
-
-                agg_df[f'CREDIT_APPLICATION_RATIO_{category}'] = agg_df['SUM_AMT_CREDIT'] / agg_df['SUM_AMT_APPLICATION']
-                feature_df = agg_df[[f'CREDIT_APPLICATION_RATIO_{category}']]
+                ## ratio 
+                agg_df[f'PA_RATIO_CREDIT_APPLICATION_{category}'] = np.select(
+                condlist=[
+                agg_df['SUM_AMT_CREDIT'].isna() & agg_df['SUM_AMT_APPLICATION'].isna(),
+                agg_df['SUM_AMT_APPLICATION'].isna(),
+                agg_df['SUM_AMT_CREDIT'].isna()
+                ],
+                choicelist=[
+                    DN_MISSING_PLACEHOLDER,
+                    D_MISSING_PLACEHOLDER,
+                    N_MISSING_PLACEHOLDER
+                ],
+                default = agg_df['SUM_AMT_CREDIT'] / agg_df['SUM_AMT_APPLICATION'] 
+                )
+                
+                feature_df = agg_df[[f'PA_RATIO_CREDIT_APPLICATION_{category}']]
 
                 features_df = self._safe_join(features_df,feature_df)
-            return features_df
+                
+            return features_df.reset_index()
         else:
             logger.debug('AMT_CREDIT and  AMT_APPLICATION : column are not present in the DataFrame')
 
@@ -1293,7 +1386,7 @@ class PreviousApplicationsTransformation(BaseTransformer):
             downpayment is done for the POS category only
 
             Features Transformed:
-            - AVG_DOWN_PAYMENT_RATE:  avg downpayment rate for the per client 
+            - PA_AVG_DOWN_PAYMENT_RATE:  avg downpayment rate for the per client 
             Returns:
                 features_df(pd.DataFrame): DataFrame with SK_ID_CURR Index and Transformed features
         '''
@@ -1301,7 +1394,7 @@ class PreviousApplicationsTransformation(BaseTransformer):
 
             filt_df = self.df[self.df['NAME_PORTFOLIO'] =='POS']
 
-            feature_df =  filt_df.groupby(by='SK_ID_CURR')['RATE_DOWN_PAYMENT'].mean().to_frame('AVG_DOWN_PAYMENT_RATE')
+            feature_df =  filt_df.groupby(by='SK_ID_CURR')['RATE_DOWN_PAYMENT'].mean().to_frame('PA_AVG_DOWN_PAYMENT_RATE')
 
             
             return feature_df
@@ -1314,15 +1407,14 @@ class PreviousApplicationsTransformation(BaseTransformer):
         ''' Extract features from the 'AMT_GOODS_PRICE' in the previous application dataset.
 
             Features Transformed:
-            - AVG_AMT_GOODS_PRICE:  avg amount of prvious goods that the loan is applied for
+            - PA_AVG_AMT_GOODS_PRICE:  avg amount of prvious goods that the loan is applied for
 
             Returns:
                 features_df(pd.DataFrame): DataFrame with SK_ID_CURR Index and Transformed features
         '''
         if 'AMT_GOODS_PRICE' in self.df.columns :
 
-            feature_df = self.df.groupby(by='SK_ID_CURR')['AMT_GOODS_PRICE'].mean().to_frame()
-            feature_df = feature_df.rename(columns={'AMT_GOODS_PRICE':'AVG_AMT_GOODS_PRICE'})
+            feature_df = self.df.groupby(by='SK_ID_CURR')['AMT_GOODS_PRICE'].mean().to_frame('PA_AVG_AMT_GOODS_PRICE')
 
             return feature_df
         
@@ -1342,11 +1434,10 @@ class PreviousApplicationsTransformation(BaseTransformer):
         '''
         if 'RATE_INTEREST_PRIVILEGED' in self.df.columns :
 
-            self.df['FLAG_HAD_RATE_INTEREST_PRIVILEGED'] = np.where( self.df['RATE_INTEREST_PRIVILEGED'] > 0 ,
-                    1,
-                    0)
-            feature_df = self.df.groupby(by='SK_ID_CURR')['FLAG_HAD_RATE_INTEREST_PRIVILEGED'].mean().to_frame()
-            feature_df = feature_df.rename(columns={'FLAG_HAD_RATE_INTEREST_PRIVILEGED':'AVG_PRIVILEGED_RATE_FLAG'})
+            self.df['FLAG_HAD_RATE_INTEREST_PRIVILEGED'] = (self.df['RATE_INTEREST_PRIVILEGED'] > 0).astype(int)
+
+            feature_df = self.df.groupby(by='SK_ID_CURR')['FLAG_HAD_RATE_INTEREST_PRIVILEGED'].mean().to_frame('PA_AVG_PRIVILEGED_RATE_FLAG')
+            
             return feature_df
         
         else:
@@ -1360,20 +1451,26 @@ class PreviousApplicationsTransformation(BaseTransformer):
                 from the previous application dataset.
 
             Features Transformed:
-            - RATIO_REFUSED_LOANS: ratio of the refused loans.  refused / approved + refused
-            - RATIO_APPROVED_LOANS: ratio of the refused loans.  approved / approved + refused
+            - PA_RATIO_REFUSED_LOANS: ratio of the refused loans.  refused / approved + refused
+            - PA_RATIO_APPROVED_LOANS: ratio of the refused loans.  approved / approved + refused
 
             Returns:
                 features_df(pd.DataFrame): DataFrame with SK_ID_CURR Index and Transformed features
         '''
         if 'NAME_CONTRACT_STATUS' in self.df.columns:
+            
+            features_df = pd.DataFrame()
             temp = pd.crosstab(self.df['SK_ID_CURR'],self.df['NAME_CONTRACT_STATUS'],dropna=False)
-            temp['TOTAL_LOANS']=temp[['Approved','Refused']].sum(axis=1)
-        
-            temp['RATIO_REFUSED_LOANS'] = temp['Refused'] / temp['TOTAL_LOANS']
-            temp['RATIO_APPROVED_LOANS'] = temp['Approved'] / temp['TOTAL_LOANS']
-
-            features_df =  temp[['RATIO_REFUSED_LOANS','RATIO_APPROVED_LOANS']].copy()
+            temp['TOTAL_LOANS'] = temp.get('Approved', 0) + temp.get('Refused', 0)
+            temp = temp.reset_index()
+            # to avoid Division By 0 Error
+            filt  =temp['TOTAL_LOANS'] > 0
+            filt_df = temp.loc[filt].copy()
+            
+            features_1 = self._create_ratio_feature(filt_df,'Refused','TOTAL_LOANS','PA_RATIO_REFUSED_LOANS')
+            features_2 = self._create_ratio_feature(filt_df,'Approved','TOTAL_LOANS','PA_RATIO_APPROVED_LOANS')
+            
+            features_df = features_1.merge(features_2,on='SK_ID_CURR',how='outer')
 
             return features_df
         else:
@@ -1385,14 +1482,14 @@ class PreviousApplicationsTransformation(BaseTransformer):
         ''' Extract features from the 'DAYS_DECISION' and  NAME_CONTRACT_STATUS in the previous application dataset.
 
             Features Transformed:
-            - LOANS_REFUSED_RECENT_D: num of refused loans in the last days_window ex: 60 d 180 d 
-
+            - LOANS_REFUSED_RECENT_{XD}: num of refused loans in the last days_window
+                time_frames = [90,180,360, 720, 1080, 1440] 
             Returns:
                 features_df(pd.DataFrame): DataFrame with SK_ID_CURR Index and Transformed features
         '''
         
         if 'DAYS_DECISION' in self.df.columns and 'NAME_CONTRACT_STATUS' in self.df.columns :
-            time_frames = [180,360, 720, 1080, 1440] 
+            time_frames = [90,180,360, 720, 1080, 1440] 
             features_df = pd.DataFrame()
 
             for frame in time_frames:
@@ -1401,9 +1498,11 @@ class PreviousApplicationsTransformation(BaseTransformer):
 
                 temp = self.df.loc[filt].copy()
 
-                feature_df = temp.groupby(by='SK_ID_CURR')['SK_ID_PREV'].nunique().to_frame(f'LOANS_REFUSED_RECENT_{frame}D')
-                
-                features_df = self._safe_join(features_df,feature_df)
+                feature_df = temp.groupby(by='SK_ID_CURR')['SK_ID_PREV'].nunique().to_frame(f'PA_LOANS_REFUSED_RECENT_{frame}D')
+                if features_df.empty:
+                    features_df = feature_df
+                else:
+                    features_df =features_df.merge(feature_df,on='SK_ID_CURR',how='outer')
                 
             return features_df.fillna(0)
         
@@ -1420,9 +1519,9 @@ class PreviousApplicationsTransformation(BaseTransformer):
                 features_df(pd.DataFrame): DataFrame with SK_ID_CURR Index and Transformed features
         '''
         if 'DAYS_DECISION' in self.df.columns:
-            feature_df = self.df.groupby('SK_ID_CURR')['DAYS_DECISION'].max().to_frame('DAYS_SINCE_LAST_LOAN_APPLY')
+            feature_df = self.df.groupby('SK_ID_CURR')['DAYS_DECISION'].max().to_frame('PA_DAYS_SINCE_LAST_LOAN_APPLY').reset_index()
 
-            feature_df['DAYS_SINCE_LAST_LOAN_APPLY'] = -feature_df['DAYS_SINCE_LAST_LOAN_APPLY']
+            feature_df['PA_DAYS_SINCE_LAST_LOAN_APPLY'] = - feature_df['PA_DAYS_SINCE_LAST_LOAN_APPLY']
 
             return feature_df
         else:
@@ -1440,17 +1539,20 @@ class PreviousApplicationsTransformation(BaseTransformer):
 
         if 'CODE_REJECT_REASON' in self.df.columns and 'DAYS_DECISION' in self.df.columns:
             time_frames =[90, 180, 270, 360, 720]
-            features_df = pd.DataFrame({'SK_ID_CURR': self.df['SK_ID_CURR'].unique()})
-
+            features_df = pd.DataFrame()
             self.df['FLAG_HC_REJECT_REASON'] = (self.df['CODE_REJECT_REASON'] =='HC').astype(int)
 
             for frame in time_frames:    
                 filt = (self.df['DAYS_DECISION'] > -frame)
                 temp = (self.df.loc[filt]).copy()
 
-                feature_df = temp.groupby(by='SK_ID_CURR')['FLAG_HC_REJECT_REASON'].sum().to_frame(f'NUM_HC_REJECT_REASON_{frame}D').reset_index()
+                feature_df = temp.groupby(by='SK_ID_CURR')['FLAG_HC_REJECT_REASON'].sum().to_frame(f'PA_NUM_HC_REJECT_REASON_{frame}D').reset_index()
+                
+                if features_df.empty:
+                    features_df = feature_df
+                else:
+                    features_df = features_df.merge(feature_df, on='SK_ID_CURR', how='outer')
 
-                features_df = features_df.merge(feature_df, on='SK_ID_CURR', how='left')
         
             return features_df.fillna(0)
         
@@ -1467,17 +1569,17 @@ class PreviousApplicationsTransformation(BaseTransformer):
         '''            
 
         if 'CODE_REJECT_REASON' in self.df.columns:
-            filt_df = self.df.copy()
-            filt_df['NUM_HC_REJECT_REASON'] = (filt_df['CODE_REJECT_REASON'] =='HC').astype(int)
-            filt_df['NUM_REFUSED'] = (filt_df['NAME_CONTRACT_STATUS'] == 'Refused').astype(int)
             
-            feature_df = filt_df.groupby(by='SK_ID_CURR').agg(
+            self.df['NUM_HC_REJECT_REASON'] = (self.df['CODE_REJECT_REASON'] =='HC').astype(int)
+            self.df['NUM_REFUSED'] = (self.df['NAME_CONTRACT_STATUS'] == 'Refused').astype(int)
+            
+            agg_df = self.df.groupby(by='SK_ID_CURR').agg(
                     NUM_HC_REJECT_REASON_LOANS =('NUM_HC_REJECT_REASON','sum'),
                     NUM_REFUSED_LOANS =('NUM_REFUSED','sum'),
                 ).reset_index()
-            feature_df['RATIO_HC_REFUSED_LOANS'] =feature_df['NUM_HC_REJECT_REASON_LOANS'] / feature_df['NUM_REFUSED_LOANS']
-            feature_df = feature_df[['SK_ID_CURR','RATIO_HC_REFUSED_LOANS']]
 
+            feature_df = self._create_ratio_feature(agg_df,'NUM_HC_REJECT_REASON_LOANS','NUM_REFUSED_LOANS','PA_RATIO_HC_REFUSED_LOANS')
+    
             return feature_df
         else:
             logger.debug('CODE_REJECT_REASON column are not present in the DataFrame')
@@ -1497,11 +1599,11 @@ class PreviousApplicationsTransformation(BaseTransformer):
 
         if 'CODE_REJECT_REASON' in self.df.columns :
 
-            self.df['NUM_SCO_SCOFR_REJECT_REASON'] = np.where(self.df['CODE_REJECT_REASON'].isin(['SCO','SCOFR']),
+            self.df['PA_NUM_SCO_SCOFR_REJECT_REASON'] = np.where(self.df['CODE_REJECT_REASON'].isin(['SCO','SCOFR']),
                                        1,
                                        0)
            
-            feature_df =self.df.groupby(by='SK_ID_CURR')['NUM_SCO_SCOFR_REJECT_REASON'].sum().to_frame().reset_index()
+            feature_df =self.df.groupby(by='SK_ID_CURR')['PA_NUM_SCO_SCOFR_REJECT_REASON'].sum().to_frame().reset_index()
 
             return feature_df.fillna(0)
         
@@ -1521,9 +1623,9 @@ class PreviousApplicationsTransformation(BaseTransformer):
 
         if 'CODE_REJECT_REASON' in self.df.columns :
 
-            self.df['NUM_LIMIT_REJECT_REASON'] = (self.df['CODE_REJECT_REASON'] == 'LIMIT').astype(int)
+            self.df['PA_NUM_LIMIT_REJECT_REASON'] = (self.df['CODE_REJECT_REASON'] == 'LIMIT').astype(int)
            
-            feature_df =self.df.groupby(by='SK_ID_CURR')['NUM_LIMIT_REJECT_REASON'].sum().to_frame().reset_index()
+            feature_df =self.df.groupby(by='SK_ID_CURR')['PA_NUM_LIMIT_REJECT_REASON'].sum().to_frame().reset_index()
             return feature_df.fillna(0)
         else:
             logger.debug('CODE_REJECT_REASON : column are not present in the DataFrame')
@@ -1541,18 +1643,17 @@ class PreviousApplicationsTransformation(BaseTransformer):
             self.df['UNKNOWN_REJECT_REASON_CNT'] = self.df['CODE_REJECT_REASON'].isna() | self.df['CODE_REJECT_REASON'].isin(['XNA', 'XAP'])
             self.df['UNKNOWN_REJECT_REASON_CNT'] = self.df['UNKNOWN_REJECT_REASON_CNT'].astype(int)
             
-            feature_df = self.df.groupby('SK_ID_CURR')['UNKNOWN_REJECT_REASON_CNT'].sum().to_frame().reset_index()
+            feature_df = self.df.groupby('SK_ID_CURR')['UNKNOWN_REJECT_REASON_CNT'].sum().to_frame('PA_UNKNOWN_REJECT_REASON_CNT').reset_index()
             return feature_df.fillna(0)
         else:
             logger.debug('CODE_REJECT_REASON column not present in the DataFrame')
-
 
     def _extract_ratio_repeater(self):
         ''' Extract overall repeater application ratio per client.
 
         Features Transformed:
         - RATIO_REPEATER: ratio of applications where client was a Repeater 
-                          over total applications (full history)
+            over total applications (full history)
 
         Returns:
             features_df (pd.DataFrame): DataFrame with SK_ID_CURR index
@@ -1566,7 +1667,7 @@ class PreviousApplicationsTransformation(BaseTransformer):
             feature_df = (
                 df.groupby('SK_ID_CURR')['FLAG_REPEATER']
                 .mean()
-                .to_frame('RATIO_REPEATER')
+                .to_frame('PA_RATIO_REPEATER')
             ).reset_index()
 
             return feature_df
@@ -1597,7 +1698,7 @@ class PreviousApplicationsTransformation(BaseTransformer):
             feature_df = (
                 df.groupby('SK_ID_CURR')['FLAG_NEW_CLIENT_1Y']
                 .max()
-                .to_frame()
+                .to_frame('PA_FLAG_NEW_CLIENT_1Y')
             ).reset_index()
 
             return feature_df
@@ -1628,17 +1729,14 @@ class PreviousApplicationsTransformation(BaseTransformer):
                 ['AP+ (Cash loan)', 'Contact center']
             ).astype(int)
 
-            feature_df = df.groupby('SK_ID_CURR').agg(
+            agg_df = df.groupby('SK_ID_CURR').agg(
                 NUM_HIGH_RISK_CHANNEL=('FLAG_HIGH_RISK_CHANNEL', 'sum'),
                 TOTAL_APPLICATIONS=('FLAG_HIGH_RISK_CHANNEL', 'count')
             ).reset_index()
+            
+            feature_df = self._create_ratio_feature(agg_df,'NUM_HIGH_RISK_CHANNEL','TOTAL_APPLICATIONS','PA_RATIO_HIGH_RISK_CHANNEL')
 
-            feature_df['RATIO_HIGH_RISK_CHANNEL'] = (
-                feature_df['NUM_HIGH_RISK_CHANNEL'] /
-                feature_df['TOTAL_APPLICATIONS']
-            )
-
-            return feature_df[['SK_ID_CURR','RATIO_HIGH_RISK_CHANNEL']]
+            return feature_df
 
         else:
             logger.debug('Required columns  oHANNEL_TYPE not present in DataFrame')
@@ -1656,7 +1754,7 @@ class PreviousApplicationsTransformation(BaseTransformer):
 
         if 'NFLAG_INSURED_ON_APPROVAL' in self.df.columns:
             
-            feature_df = self.df.groupby('SK_ID_CURR')['NFLAG_INSURED_ON_APPROVAL'].mean().to_frame('RATIO_INSURED_LOANS').reset_index()
+            feature_df = self.df.groupby('SK_ID_CURR')['NFLAG_INSURED_ON_APPROVAL'].mean().to_frame('PA_RATIO_INSURED_LOANS').reset_index()
 
             return feature_df
         
@@ -1684,6 +1782,7 @@ class PreviousApplicationsTransformation(BaseTransformer):
         
             filt = self.df['NAME_TYPE_SUITE'].isin(['XNA','XAP'])
             df = self.df.loc[~filt].copy()
+            
             # Flag unaccompanied applications
             df['FLAG_UNACCOMPANIED'] = (df['NAME_TYPE_SUITE'] == 'Unaccompanied').astype(int)
             
@@ -1699,10 +1798,15 @@ class PreviousApplicationsTransformation(BaseTransformer):
             # if the client dont have unaccompanied flag then the value for flag sum will be 0
             agg_df['FLAG_NEVER_UNACCOMPANIED'] = (agg_df['FLAG_SUM'] == 0).astype(int)
 
-            features_df = agg_df[['SK_ID_CURR','FLAG_ALWAYS_UNACCOMPANIED','FLAG_NEVER_UNACCOMPANIED','RATIO_UNACCOMPANIED','N_UNIQUE_SUITES']]
+            agg_df = agg_df.rename(columns= {'FLAG_ALWAYS_UNACCOMPANIED':'PA_FLAG_ALWAYS_UNACCOMPANIED',
+                                    'FLAG_NEVER_UNACCOMPANIED':'PA_FLAG_NEVER_UNACCOMPANIED',
+                                    'RATIO_UNACCOMPANIED':'PA_RATIO_UNACCOMPANIED',
+                                    'N_UNIQUE_SUITES':'PA_CNT_UNIQUE_SUITES'})
+            
+            features_df = agg_df[['SK_ID_CURR','PA_FLAG_ALWAYS_UNACCOMPANIED','PA_FLAG_NEVER_UNACCOMPANIED','PA_RATIO_UNACCOMPANIED','PA_CNT_UNIQUE_SUITES']]
 
             return features_df
-        
+    
 
         else:
             logger.debug('NAME_TYPE_SUITE column are not present in the DataFrame')
@@ -1728,10 +1832,11 @@ class PreviousApplicationsTransformation(BaseTransformer):
             for frame in time_frames:
                 filt = self.df['DAYS_DECISION']> - frame
                 filt_df = self.df.loc[filt].copy()
-                feature_df = filt_df.groupby('SK_ID_CURR')['HIGH_RISK_YIELD_LOANS'].mean().to_frame(f'RATIO_HIGH_RISK_YIELD_LOANS_{frame}D')
+                feature_df = filt_df.groupby('SK_ID_CURR')['HIGH_RISK_YIELD_LOANS'].mean().to_frame(f'PA_RATIO_HIGH_RISK_YIELD_LOANS_{frame}D')
 
                 features_df = self._safe_join(features_df,feature_df)
-
+            
+            features_df = features_df.reset_index()
                 
             return features_df
         
@@ -1765,18 +1870,17 @@ class PreviousApplicationsTransformation(BaseTransformer):
             df['RISK_WEIGHT'] = df['NAME_YIELD_GROUP'].map(risk_map)
 
             for frame in time_frames_days:
-                filt_df = df[df['DAYS_DECISION'] > -frame]
+                filt_df = df[df['DAYS_DECISION'] > -frame].copy()
                 # Group by client and calculate average
                 agg_df = (
                     filt_df.groupby('SK_ID_CURR')['RISK_WEIGHT']
                     .mean()
-                    .to_frame(f'AVG_RISK_WEIGHT_{frame}D')
+                    .to_frame(f'PA_AVG_RISK_WEIGHT_{frame}D')
                 )
-                if features_df.empty:
-                    features_df = agg_df
-                else:
-                    features_df = features_df.join(agg_df,how='outer')
-
+                features_df = self._safe_join(features_df,agg_df)
+                
+            features_df = features_df.reset_index()
+            
             return features_df 
         
         else:
@@ -1798,25 +1902,26 @@ class PreviousApplicationsTransformation(BaseTransformer):
 
             self.df['DAYS_TERMINATION'] = self.df['DAYS_TERMINATION'].replace({365243.0:np.nan})
             self.df['DAYS_LAST_DUE'] = self.df['DAYS_LAST_DUE'].replace({365243.0:np.nan})
-            categories = ['POS', 'Cash', 'Credit'] 
+            
+            categories = ['POS', 'Cash', 'Cards'] 
             features_df = pd.DataFrame()
             self.df['LOAN_REPAYMENT_DIFF'] = self.df['DAYS_TERMINATION'] - self.df['DAYS_LAST_DUE']
 
             for category in categories:
                 filt = (self.df['NAME_PORTFOLIO'] == category)
                 filt_df = self.df.loc[filt].copy()
-        
 
-                agg_df = filt_df.groupby('SK_ID_CURR')['LOAN_REPAYMENT_DIFF'].agg(['mean','max']).rename(columns={
-                    "mean":f"MEAN_LOAN_REPAYMENT_DIFF_{category}",
-                    "max":f"MAX_LOAN_REPAYMENT_DIFF_{category}"
-                })
-
-                if features_df.empty:
-                    features_df = agg_df
-                else:
-                    features_df = features_df.join(agg_df,how='outer')
-
+                agg_df = filt_df.groupby('SK_ID_CURR').agg(
+                    MEAN_LOAN_REPAYMENT_DIFF = ('LOAN_REPAYMENT_DIFF','mean'),
+                    MAX_LOAN_REPAYMENT_DIFF =  ('LOAN_REPAYMENT_DIFF','max') 
+                )
+                agg_df = agg_df.rename(columns = {'MEAN_LOAN_REPAYMENT_DIFF':f'PA_MEAN_LOAN_REPAYMENT_DIFF_{category}',
+                                         'MAX_LOAN_REPAYMENT_DIFF':f'PA_MAX_LOAN_REPAYMENT_DIFF_{category}'})
+                
+                features_df = self._safe_join(features_df,agg_df)
+                
+            features_df.reset_index()
+                
             return features_df
         
         else:
@@ -1857,9 +1962,14 @@ class PreviousApplicationsTransformation(BaseTransformer):
             
             self.main_df = main_df
             for extractor in self.feature_extractors:
+                 # log the method is running
                 method_name = extractor.__name__
-                logger.info(f"Running {self.__class__.__name__}.{method_name}")
+                logger.info(f"Current Method Running: {self.__class__.__name__}.{method_name}")        
 
+                
+                features_df = extractor()
+                
+                       
                 features_df = extractor()
                 features_cols = features_df.columns.to_list()
 
@@ -1877,7 +1987,7 @@ class PreviousApplicationsTransformation(BaseTransformer):
 
 
 
-class CreditBalanceTransformation(BaseTransformer):
+class CreditBalanceTransformation(BaseTransformer,RatioFeatureMixin):
     def __init__(self, data_transformation_config: DataTransformationConfig, data_ingestion_config: DataIngestionConfig):
 
         super().__init__(data_transformation_config, data_ingestion_config)
@@ -1886,12 +1996,12 @@ class CreditBalanceTransformation(BaseTransformer):
             self.data_ingestion_config.credit_card_balance,
             self.data_transformation_config.credit_card_balance_reduce_dtypes
             )
-        self.time_frames = [1,3,6,9,12]
+        self.time_frames = [1,3,6,9,12,18,24]
      
     @property 
     def monthly_credit_agg(self):
         '''
-        Prepare reusable monthly-level credit card aggregates.
+        Prepare reusable monthly-level credit card aggregates so dont have to calculate it multiple times.
         
         Aggregation level:
         - SK_ID_CURR
@@ -1924,6 +2034,10 @@ class CreditBalanceTransformation(BaseTransformer):
                 AMT_CREDIT_LIMIT_ACTUAL_TOTAL=('AMT_CREDIT_LIMIT_ACTUAL', 'sum'),))
         return self._monthly_credit_agg
 
+    def _filter_months(self, df, frame):
+        return df[(df['MONTHS_BALANCE'] >= -frame) & (df['MONTHS_BALANCE'] < 0)]
+
+
     def _safe_join(self,base,new)-> pd.DataFrame:
         ''' helper function'''
         if base.empty:
@@ -1934,14 +2048,15 @@ class CreditBalanceTransformation(BaseTransformer):
     def _extract_credit_utilization_features(self):
 
         ''' Extract maximum weighted credit utilization over multiple time frames.
-            time frames :  [3,6,9,12] months
             and trend of credit utilization 3M -> 12M
 
             WEIGHTED_UTILIZATION = sum(AMT_BALANCE) / sum(AMT_CREDIT_LIMIT_ACTUAL)
 
             Features Transformed:
-            - MAX_WEIGHTED_CREDIT_UTIL_{XM} : max Average ratio utilization per customer across their active lines on time frames
-            - CREDIT_UTIL_TREND_3M_12M: Difference between 3-month and 12-month mean utilization,
+            - CB_MAX_MONTHLY_UTIL_{XM}:- Maximum monthly credit utilization observed in the last X months
+            - CB_UTIL_VOLATILITY_{XM}:Standard deviation of monthly utilization in the last X months
+            - CB_WT_CREDIT_UTIL{XM} : Weighted Average of the credit utilization over the time window
+            - CB_WT_CREDIT_UTIL_TREND_3M_12M: Difference between 3-month and 12-month weighted credit utilization,
             Returns:
                 features_df(pd.DataFrame): DataFrame with SK_ID_CURR Index and Transformed features
         '''
@@ -1956,26 +2071,60 @@ class CreditBalanceTransformation(BaseTransformer):
 
             for frame in self.time_frames:
 
-                monthly_frame = monthly_df[monthly_df['MONTHS_BALANCE'] >= -frame].copy()
+                monthly_frame =self._filter_months(monthly_df,frame)
+                
+                #max or volatility features
+                
+                monthly_frame_temp = self._create_ratio_feature(monthly_frame,'AMT_BALANCE_TOTAL','AMT_CREDIT_LIMIT_ACTUAL_TOTAL','MONTHLY_UTIL')
+                
+                max_util = (
+                    monthly_frame_temp
+                    .groupby('SK_ID_CURR')['MONTHLY_UTIL']
+                    .max()
+                    .to_frame(f'CB_MAX_MONTHLY_UTIL_{frame}M')
+                ).reset_index()
+                
 
+                std_util = (
+                    monthly_frame_temp
+                    .groupby('SK_ID_CURR')['MONTHLY_UTIL']
+                    .std()
+                    .to_frame(f'CB_UTIL_VOLATILITY_{frame}M')
+                ).reset_index()
+                                    
+                # Weighted avg utilization features# 
+                agg_df = (
+                    monthly_frame
+                    .groupby('SK_ID_CURR')
+                    .agg(
+                        BALANCE_SUM=('AMT_BALANCE_TOTAL', 'sum'),
+                        LIMIT_SUM=('AMT_CREDIT_LIMIT_ACTUAL_TOTAL', 'sum')
+                    )
+                )
+                agg_df = agg_df.reset_index()
+                
+
+                agg_df = self._create_ratio_feature(agg_df,'BALANCE_SUM','LIMIT_SUM','UTILIZATION_RATIO')
+                
+                agg_df = agg_df.rename(columns = {'UTILIZATION_RATIO':f'CB_WT_CREDIT_UTIL_{frame}M'})                
+                # max_util    ,std_util agg_df
+                frame_features = (
+                    max_util
+                    .merge(std_util, on='SK_ID_CURR', how='outer')
+                    .merge(agg_df, on='SK_ID_CURR', how='outer')
+                ) 
+                if features_df.empty:
+                    features_df = frame_features
+                else:
+                    features_df = features_df.merge(
+                        frame_features,
+                        on='SK_ID_CURR',
+                        how='outer'
+                    )
+                
+            features_df['CB_WT_CREDIT_UTIL_TREND_3M_12M'] = features_df['CB_WT_CREDIT_UTIL_3M'] - features_df['CB_WT_CREDIT_UTIL_12M']
             
-                monthly_frame['UTILIZATION_RATIO'] = np.where(
-                            monthly_frame['AMT_CREDIT_LIMIT_ACTUAL_TOTAL'] > 0,
-                            monthly_frame['AMT_BALANCE_TOTAL'] / monthly_frame['AMT_CREDIT_LIMIT_ACTUAL_TOTAL'],
-                            np.nan
-                        )           
-                
-                if frame in [3,12]:
-                    feature_df = monthly_frame.groupby('SK_ID_CURR')['UTILIZATION_RATIO'].mean().to_frame(f'WEIGHTED_AVG_CREDIT_UTILIZATION_{frame}M')
-                    
-                    #safe join helper function
-                    features_df = self._safe_join(features_df, feature_df)
-
-                feature_df = monthly_frame.groupby('SK_ID_CURR')['UTILIZATION_RATIO'].max().to_frame(f'MAX_WEIGHTED_CREDIT_UTIL_{frame}M')
-                
-                features_df = self._safe_join(features_df, feature_df)
-
-            features_df['CREDIT_UTILIZATION_TREND_3M_12M'] = features_df['WEIGHTED_AVG_CREDIT_UTILIZATION_3M'] - features_df['WEIGHTED_AVG_CREDIT_UTILIZATION_12M']
+            
             
             return features_df
         
@@ -1986,14 +2135,15 @@ class CreditBalanceTransformation(BaseTransformer):
 
         ''' Extract credit usage features based on AMT_DRAWINGS_CURRENT and AMT_CREDIT_LIMIT_ACTUAL
             from the Credit Balance dataset.
-            Time frames considered: [3, 6, 12, 24]
-
+    
             Weighted monthly usage ratio is computed as:
             CREDIT_USAGE_RATIO = sum(AMT_DRAWINGS_CURRENT) / sum(AMT_CREDIT_LIMIT_ACTUAL)
 
             Features Transformed:
-            - MAX_CREDIT_USAGE_RATIO_XM:  Maximum monthly weighted  usage ratio over X months.
-            - CREDIT_USAGE_TREND_3M_12M : Difference between 3-month and 12-month average usage ratios
+            - CB_MAX_CREDIT_USAGE_RATIO_{XM}:  Maximum monthly credit usage ratio over X months.
+            - CB_WT_CREDIT_USAGE_{XM}: weighted credit usage over time frames
+        
+            - CB_TREND_CREDIT_DRAWING_3M_12M : Difference between 3-month and 12-month average usage ratios
                 (indicates increasing or decreasing spending behavior).
 
             Returns:
@@ -2002,46 +2152,81 @@ class CreditBalanceTransformation(BaseTransformer):
         required_cols = {'MONTHS_BALANCE', 'AMT_DRAWINGS_CURRENT', 'AMT_CREDIT_LIMIT_ACTUAL'}
         if required_cols.issubset(self.df.columns):
             features_df = pd.DataFrame()
+            temp_df = pd.DataFrame()
 
             monthly_df  = self.monthly_credit_agg
 
             for frame in self.time_frames:
 
-                filt  = monthly_df['MONTHS_BALANCE'] >= -frame
+                monthly_frame = self._filter_months(monthly_df,frame)
                                 
-                monthly_frame = monthly_df.loc[filt].copy()
-            
-                monthly_frame['CREDIT_USAGE_RATIO_PER_MONTH'] = np.where(
-                            monthly_frame['AMT_CREDIT_LIMIT_ACTUAL_TOTAL'] > 0,
-                            monthly_frame['AMT_DRAWINGS_CURRENT_TOTAL'] / monthly_frame['AMT_CREDIT_LIMIT_ACTUAL_TOTAL'],
-                            np.nan
-                        )  
-                if frame in [3,12]:
-                    feature_df = monthly_frame.groupby('SK_ID_CURR')['CREDIT_USAGE_RATIO_PER_MONTH'].mean().to_frame(f'AVG_CREDIT_DRAWING_RATIO_{frame}M')
-                    features_df = self._safe_join(features_df, feature_df)
-
                 
-                feature_df = monthly_frame.groupby('SK_ID_CURR')['CREDIT_USAGE_RATIO_PER_MONTH'].max().to_frame(f'MAX_CREDIT_DRAWING_RATIO_{frame}M')
-                features_df = self._safe_join(features_df, feature_df)
+                new_monthly_frame = self._create_ratio_feature(
+                    monthly_frame,
+                    numerator='AMT_DRAWINGS_CURRENT_TOTAL',
+                    denominator='AMT_CREDIT_LIMIT_ACTUAL_TOTAL',
+                    feature_name='CREDIT_USAGE_RATIO_PER_MONTH'
+                )
+                
+                #max ratio  for time frames
+                max_ratio_df = (
+                        new_monthly_frame.groupby('SK_ID_CURR')['CREDIT_USAGE_RATIO_PER_MONTH']
+                        .max()
+                        .to_frame(f'CB_MAX_CREDIT_USAGE_RATIO_{frame}M')
+                        .reset_index()
+                        )
+                
+                #weighted average for the time frames
+                agg_df = (
+                    monthly_frame.groupby('SK_ID_CURR')
+                    .agg(
+                        TOTAL_DRAWINGS=('AMT_DRAWINGS_CURRENT_TOTAL', 'sum'),
+                        TOTAL_LIMIT=('AMT_CREDIT_LIMIT_ACTUAL_TOTAL', 'sum')
+                    )
+                )
+                agg_df = agg_df.reset_index()
+                agg_df = self._create_ratio_feature(agg_df, 'TOTAL_DRAWINGS', 'TOTAL_LIMIT', f'CB_WT_CREDIT_USAGE_{frame}M')
 
+                if frame in [3,12]:
+                    feature_df = new_monthly_frame.groupby('SK_ID_CURR')['CREDIT_USAGE_RATIO_PER_MONTH'].mean().to_frame(f'AVG_CREDIT_DRAWING_RATIO_{frame}M').reset_index()
+                    if features_df.empty:
+                        features_df = feature_df
+                    else:
+                        features_df = features_df.merge(feature_df,on='SK_ID_CURR',how='outer')
 
-            features_df['CREDIT_DRAWING_TREND_3M_12M'] = features_df['AVG_CREDIT_DRAWING_RATIO_3M'] - features_df['AVG_CREDIT_DRAWING_RATIO_12M']
+                #max_ratio_df, agg_df
+                
+                frame_features = (
+                    max_ratio_df
+                    .merge(agg_df, on='SK_ID_CURR', how='outer')
+                ) 
+                if temp_df.empty:
+                    temp_df = frame_features
+                else:
+                    temp_df = temp_df.merge(
+                        frame_features,
+                        on='SK_ID_CURR',
+                        how='outer'
+                    )
+       
+                
+            features_df['CB_TREND_CREDIT_DRAWING_3M_12M'] = features_df['AVG_CREDIT_DRAWING_RATIO_3M'] - features_df['AVG_CREDIT_DRAWING_RATIO_12M']
+            features_df = features_df.merge(temp_df,on='SK_ID_CURR',how='left')
+ 
 
-            
             return features_df
         else:
             logger.debug("'MONTHS_BALANCE', 'AMT_CREDIT_LIMIT_ACTUAL',AMT_DRAWINGS_CURRENT  column are not present in the DataFrame")
 
-     
     def _extract_atm_cash_usage_features(self):
 
         '''  Extract ATM cash utilization features from the Credit Card Balance dataset.
 
             Features Transformed:
-            - MAX_ATM_CASH_UTILIZATION_RATIO_XM:  Maximum ATM cash monthly usage ratio over X months.
-            - AVG_ATM_CASH_UTILIZATION_RATIO_3M_12M: Difference between 3-month and 12-month average ATM cash utilization.
+            - CB_MAX_RATIO_ATM_CASH_UTILIZATION__{XM}:  Maximum ATM cash monthly usage ratio over X months.
+            - CB_TREND_ATM_CASH_UTILIZATION_3M_12M: Difference between 3-month and 12-month average ATM cash utilization.
                      Positive value indicates increasing reliance on ATM cash.
-
+            - CB_WT_ATM_CASH_UTIL_{XM}: Weighted Atm Cash utilization over x months
             Returns:
                 features_df(pd.DataFrame): DataFrame with SK_ID_CURR Index and Transformed features
         '''
@@ -2049,31 +2234,64 @@ class CreditBalanceTransformation(BaseTransformer):
 
         if required_cols.issubset(self.df.columns):
             features_df = pd.DataFrame()
+            temp_df = pd.DataFrame()
 
             monthly_df  = self.monthly_credit_agg
 
             for frame in self.time_frames:
 
-                frame_df = monthly_df[monthly_df['MONTHS_BALANCE'] >= -frame].copy()
-
-
-                frame_df['ATM_CASH_UTILIZATION_RATIO'] = np.where(
-                            frame_df['AMT_CREDIT_LIMIT_ACTUAL_TOTAL'] > 0,
-                            frame_df['AMT_DRAWINGS_ATM_CURRENT_TOTAL'] / frame_df['AMT_CREDIT_LIMIT_ACTUAL_TOTAL'],
-                            np.nan
-                        )  
-            
-                if frame in [3,12]:
-                    feature_df = frame_df.groupby('SK_ID_CURR')['ATM_CASH_UTILIZATION_RATIO'].mean().to_frame(f'AVG_ATM_CASH_UTILIZATION_RATIO_{frame}M')
-                    features_df = self._safe_join(features_df, feature_df)
-
+                monthly_frame =self._filter_months(monthly_df,frame)
                 
-                feature_df = frame_df.groupby('SK_ID_CURR')['ATM_CASH_UTILIZATION_RATIO'].max().to_frame(f'MAX_ATM_CASH_UTILIZATION_RATIO_{frame}M')
 
-                features_df = self._safe_join(features_df, feature_df)
+                frame_ratio_df = self._create_ratio_feature(
+                            monthly_frame,
+                            numerator='AMT_DRAWINGS_ATM_CURRENT_TOTAL',
+                            denominator='AMT_CREDIT_LIMIT_ACTUAL_TOTAL',
+                            feature_name='ATM_CASH_UTILIZATION_RATIO'
+                        )
+                #max ratios dataframe
+                
+                max_ratio_df = (
+                        frame_ratio_df.groupby('SK_ID_CURR')['ATM_CASH_UTILIZATION_RATIO']
+                        .max()
+                        .to_frame(f'CB_MAX_RATIO_ATM_CASH_UTILIZATION_{frame}M')
+                        .reset_index()
+                    )
+                
+                # Weighted utilization for this frame
+                agg_df = (
+                    monthly_frame.groupby('SK_ID_CURR')
+                    .agg(
+                        TOTAL_ATM_DRAWINGS=('AMT_DRAWINGS_ATM_CURRENT_TOTAL', 'sum'),
+                        TOTAL_LIMIT=('AMT_CREDIT_LIMIT_ACTUAL_TOTAL', 'sum')
+                    )
+                )
+                agg_df = agg_df.reset_index()
+                agg_df = self._create_ratio_feature(agg_df, 'TOTAL_ATM_DRAWINGS', 'TOTAL_LIMIT', f'CB_WT_ATM_CASH_UTIL_{frame}M')
+                                
+                if frame in [3,12]:
+                    avg_df  = frame_ratio_df.groupby('SK_ID_CURR')['ATM_CASH_UTILIZATION_RATIO'].mean().to_frame(f'AVG_ATM_CASH_UTILIZATION_RATIO_{frame}M').reset_index()
+                    if features_df.empty:
+                        features_df = avg_df
+                    else:
+                        features_df = features_df.merge(avg_df,on='SK_ID_CURR' ,how='outer')
 
+                frame_features = max_ratio_df.merge(agg_df, on='SK_ID_CURR', how='outer')
+                                 
+                if temp_df.empty:
+                    temp_df = frame_features
+                else:
+                    temp_df = temp_df.merge(
+                        frame_features,
+                        on='SK_ID_CURR',
+                        how='outer'
+                    )
+                    
+            features_df['CB_TREND_ATM_CASH_UTILIZATION_3M_12M'] = features_df['AVG_ATM_CASH_UTILIZATION_RATIO_3M'] - features_df['AVG_ATM_CASH_UTILIZATION_RATIO_12M']
+            
+             # Merge all max + weighted features
+            features_df = features_df.merge(temp_df, on='SK_ID_CURR', how='left')
 
-            features_df['AVG_ATM_CASH_UTILIZATION_RATIO_3M_12M'] = features_df['AVG_ATM_CASH_UTILIZATION_RATIO_3M'] - features_df['AVG_ATM_CASH_UTILIZATION_RATIO_12M']
 
             return features_df
         
@@ -2085,10 +2303,9 @@ class CreditBalanceTransformation(BaseTransformer):
     
         '''  Extract the avg frequency of the atm withdrawl of  client in time frames features from the Credit Card Balance dataset.
 
-            time_frames = [3,6,12,24]
 
             Features Transformed:
-            - AVG_ATM_WITHDRAWAL_FREQ_{XM}:  Count of times the atm is used in last x monhts 
+            - CB_AVG_ATM_WITHDRAWAL_FREQ_{XM}: Average number of ATM withdrawals per active time window
 
             Returns:
                 features_df(pd.DataFrame): DataFrame with SK_ID_CURR Index and Transformed features
@@ -2099,16 +2316,19 @@ class CreditBalanceTransformation(BaseTransformer):
             features_df = pd.DataFrame()
             for frame in self.time_frames:
 
-                filt  = (self.df['MONTHS_BALANCE'] >= -frame) & (self.df['MONTHS_BALANCE'] < 0)
+                monthly_frame =self._filter_months(self.df,frame)
 
 
-                monthly_df = self.df.loc[filt].copy()
-
-                monthly_usage = (monthly_df.groupby(['SK_ID_CURR', 'MONTHS_BALANCE'])['CNT_DRAWINGS_ATM_CURRENT'].sum().to_frame())
-
-                feature_df = monthly_usage.groupby('SK_ID_CURR')['CNT_DRAWINGS_ATM_CURRENT'].mean().to_frame(f'AVG_ATM_WITHDRAWAL_FREQ_{frame}M')
-                features_df  = self._safe_join(features_df,feature_df)
-                
+                feature_df = (
+                    monthly_frame
+                    .groupby('SK_ID_CURR')['CNT_DRAWINGS_ATM_CURRENT']
+                    .mean()
+                    .to_frame(f'CB_AVG_ATM_WITHDRAWAL_FREQ_{frame}M')
+                ).reset_index()
+                if features_df.empty:
+                    features_df = feature_df
+                else:
+                    features_df  =features_df.merge(feature_df,on='SK_ID_CURR',how='outer')
 
 
             return features_df
@@ -2122,8 +2342,8 @@ class CreditBalanceTransformation(BaseTransformer):
                 from the Credit Card Balance dataset.
 
             Features Transformed:
-            - MAX_POS_SPEND_RATIO_XM: Maximum ratio of POS spending to total credit limit over the last X months.
-            - MAX_POS_TO_TOTAL_DRAW_RATIO_XM:  Maximum ratio of POS spending to total monthly spend over the last X months.
+            - CB_RATIO_MAX_POS_SPEND_{XM}: Maximum ratio of POS spending to total credit limit over the last X months.
+            - CB_MAX_RATIO_POS_TO_TOTAL_DRAW_{XM}:  Maximum ratio of POS spending to total monthly spend over the last X months.
 
             Returns:
                 features_df(pd.DataFrame): DataFrame with SK_ID_CURR Index and Transformed features
@@ -2139,24 +2359,21 @@ class CreditBalanceTransformation(BaseTransformer):
             for frame in self.time_frames:
                 
 
-                filt  = (monthly_df['MONTHS_BALANCE'] >= -frame) & (monthly_df['MONTHS_BALANCE'] < 0)
+                monthly_frame =self._filter_months(monthly_df,frame)
 
-                monthly_frame = monthly_df.loc[filt].copy()
+                
+                df_1 = self._create_ratio_feature(monthly_frame,
+                                                    'AMT_DRAWINGS_POS_CURRENT_TOTAL',
+                                                    'AMT_CREDIT_LIMIT_ACTUAL_TOTAL',
+                                                    'CB_RATIO_POS_SPEND_PER_MONTH')
+                df_2 = self._create_ratio_feature(monthly_frame,
+                                                    'AMT_DRAWINGS_POS_CURRENT_TOTAL',
+                                                    'AMT_DRAWINGS_CURRENT_TOTAL',
+                                                    'CB_RATIO_POS_TO_TOTAL_DRAW')
+                
+                feature_df_1 = df_1.groupby(by='SK_ID_CURR')['CB_RATIO_POS_SPEND_PER_MONTH'].max().to_frame(f'CB_RATIO_MAX_POS_SPEND_{frame}M')
+                feature_df_2 = df_2.groupby(by='SK_ID_CURR')['CB_RATIO_POS_TO_TOTAL_DRAW'].max().to_frame(f'CB_MAX_RATIO_POS_TO_TOTAL_DRAW_{frame}M')
 
-                monthly_frame['POS_SPEND_RATIO_PER_MONTH'] = np.where(
-                            monthly_frame['AMT_CREDIT_LIMIT_ACTUAL_TOTAL'] > 0,
-                            monthly_frame['AMT_DRAWINGS_POS_CURRENT_TOTAL'] / monthly_frame['AMT_CREDIT_LIMIT_ACTUAL_TOTAL'],
-                            np.nan
-                        )  
-                monthly_frame['POS_TO_TOTAL_DRAW_RATIO'] = np.where(
-                            monthly_frame['AMT_DRAWINGS_CURRENT_TOTAL'] > 0,
-                            monthly_frame['AMT_DRAWINGS_POS_CURRENT_TOTAL'] / monthly_frame['AMT_DRAWINGS_CURRENT_TOTAL'],
-                            np.nan
-                        )  
-                
-                feature_df_1 = monthly_frame.groupby(by='SK_ID_CURR')['POS_TO_TOTAL_DRAW_RATIO'].max().to_frame(f'MAX_POS_TO_TOTAL_DRAW_RATIO_{frame}M')
-                
-                feature_df_2 = monthly_frame.groupby(by='SK_ID_CURR')['POS_SPEND_RATIO_PER_MONTH'].max().to_frame(f'MAX_POS_SPEND_RATIO_{frame}M')
 
                 feature_df_list = [feature_df_1,feature_df_2]
                 frame_features  = pd.concat(feature_df_list,axis=1)
@@ -2165,7 +2382,9 @@ class CreditBalanceTransformation(BaseTransformer):
                     features_df = frame_features
                 else:
                     features_df = pd.concat([features_df, frame_features], axis=1)
- 
+            features_df = features_df.reset_index()
+
+
             return features_df
         
         else:
@@ -2174,13 +2393,12 @@ class CreditBalanceTransformation(BaseTransformer):
     def _extract_payment_behavior_features(self):
         ''' Extracts payment behavior features from the Credit Card Balance dataset over multiple time windows.
 
-            time_frames = [3,6,12,24] Months
 
             Features Transformed:
-            - MAX_AMT_PAYMENT_MIN_INST_RATIO_XM:  Max Average ratio of payments made to minimum required payments over the last X months
-            - UNDERPAYMENT_RATIO_XM:  Ratio of months where actual payment < minimum required payment  over the last X months
-            - PAYMENT_VOLATILITY_STD_XM: Standard deviation of payment-to-mini  mum-installment ratio over the last X months
-            - PAYMENT_TO_BALANCE_RATIO_XM: Max payment-to-balance ratio over last X months
+            - CB_MAX_RATIO_AMT_PAYMENT_MIN_INST_:  Max ratio of payments made to minimum required payments over the last X months
+            - CB_RATIO_UNDERPAYMENT_:  Ratio of months where actual payment < minimum required payment  over the last X months
+            - CB_STD_PAYMENT_VOLATILITY_: Standard deviation of payment-to-mini  mum-installment ratio over the last X months
+            - CB_MAX_RATIO_PAYMENT_BALANCE_: Max payment-to-balance ratio over last X months
             Returns:
                 features_df(pd.DataFrame): DataFrame with SK_ID_CURR Index and Transformed features
         '''
@@ -2193,43 +2411,50 @@ class CreditBalanceTransformation(BaseTransformer):
         
             for frame in self.time_frames:
 
-                filt  = (monthly_df['MONTHS_BALANCE'] >= -frame) & (monthly_df['MONTHS_BALANCE'] < 0)
-                monthly_frame = monthly_df.loc[filt].copy()
+                monthly_frame =self._filter_months(monthly_df,frame)
 
                 # payment-to-minimum-installment ratio
-                monthly_frame['AMT_PAYMENT_MIN_INST_RATIO'] = np.where(
-                        monthly_frame['AMT_INST_MIN_REGULARITY_TOTAL'] > 0,
-                        monthly_frame['AMT_PAYMENT_CURRENT_TOTAL'] / monthly_frame['AMT_INST_MIN_REGULARITY_TOTAL'],
-                        np.nan
-                            )
-                monthly_frame['PAYMENT_TO_BALANCE_RATIO'] = np.where(
-                        monthly_frame['AMT_BALANCE_TOTAL'] > 0,
-                        monthly_frame['AMT_PAYMENT_CURRENT_TOTAL'] / monthly_frame['AMT_BALANCE_TOTAL'],
-                        np.nan
-                            )
+                df_1 = self._create_ratio_feature(monthly_frame,
+                                                  'AMT_PAYMENT_CURRENT_TOTAL',
+                                                  'AMT_INST_MIN_REGULARITY_TOTAL',
+                                                  'CB_RATIO_AMT_PAYMENT_MIN_INST')
+                
+                df_2 = self._create_ratio_feature(monthly_frame,
+                                                  'AMT_PAYMENT_CURRENT_TOTAL',
+                                                  'AMT_BALANCE_TOTAL',
+                                                  'CB_RATIO_PAYMENT_TO_BALANCE')
+                
+              
+                
                 #underpayment flag
                 monthly_frame['UNDERPAYMENT_FLAG'] = (monthly_frame['AMT_PAYMENT_CURRENT_TOTAL'] < monthly_frame['AMT_INST_MIN_REGULARITY_TOTAL']).astype(int)
                 
                 # max payment / min installmetn ratio
-                feature_df_1=  monthly_frame.groupby(by='SK_ID_CURR')['AMT_PAYMENT_MIN_INST_RATIO'].max().to_frame(f'MAX_AMT_PAYMENT_MIN_INST_RATIO_{frame}M')
+                feature_df_1=  df_1.groupby(by='SK_ID_CURR')['CB_RATIO_AMT_PAYMENT_MIN_INST'].max().to_frame(f'CB_MAX_RATIO_AMT_PAYMENT_MIN_INST_{frame}M').reset_index()
 
                 #underpayment ratio
-                feature_df_2=  monthly_frame.groupby(by='SK_ID_CURR')['UNDERPAYMENT_FLAG'].mean().to_frame(f'UNDERPAYMENT_RATIO_{frame}M')
+                feature_df_2 = monthly_frame.groupby(by='SK_ID_CURR')['UNDERPAYMENT_FLAG'].mean().to_frame(f'CB_RATIO_UNDERPAYMENT_{frame}M').reset_index()
                 
                 # payment volatility (standard deviation)
-                feature_df_3=  monthly_frame.groupby(by='SK_ID_CURR')['AMT_PAYMENT_MIN_INST_RATIO'].std().to_frame(f'PAYMENT_VOLATILITY_STD_{frame}M')
+                feature_df_3=  df_1.groupby(by='SK_ID_CURR')['CB_RATIO_AMT_PAYMENT_MIN_INST'].std().to_frame(f'CB_STD_PAYMENT_VOLATILITY_{frame}M').reset_index()
                 
                 # PAYMENT_TO_BALANCE_RATIO
-                feature_df_4 = monthly_frame.groupby('SK_ID_CURR')['PAYMENT_TO_BALANCE_RATIO'].max().to_frame(f'MAX_PAYMENT_BALANCE_RATIO_{frame}M')
-
-
-                feature_df_list = [feature_df_1,feature_df_2,feature_df_3,feature_df_4]
-                frame_features  = pd.concat(feature_df_list,axis=1)
+                feature_df_4 = df_2.groupby('SK_ID_CURR')['CB_RATIO_PAYMENT_TO_BALANCE'].max().to_frame(f'CB_MAX_RATIO_PAYMENT_BALANCE_{frame}M').reset_index()
 
                 if features_df.empty:
-                    features_df = frame_features
+                    features_df = (
+                        feature_df_1.merge(feature_df_2,on='SK_ID_CURR',how='outer')
+                        .merge(feature_df_3,on='SK_ID_CURR',how='outer')
+                        .merge(feature_df_4,on='SK_ID_CURR',how='outer')
+                            )
                 else:
-                    features_df = pd.concat([features_df, frame_features], axis=1)
+                    features_df = (
+                        features_df.merge(feature_df_1,on='SK_ID_CURR',how='outer')
+                        .merge(feature_df_2,on='SK_ID_CURR',how='outer')
+                        .merge(feature_df_3,on='SK_ID_CURR',how='outer')
+                        .merge(feature_df_4,on='SK_ID_CURR',how='outer')    )
+                    
+    
 
             return features_df
         
@@ -2240,10 +2465,10 @@ class CreditBalanceTransformation(BaseTransformer):
 
     def _extract_credit_utilization_ratios(self):
 
-        ''' Extract features from the, 'AMT_RECEIVABLE_PRINCIPAL','AMT_CREDIT_LIMIT_ACTUAL','AMT_TOTAL_RECEIVABLE' in the Credit Balance dataset.
+        ''' Extract features from the, 'AMT_RECEIVABLE_PRINCIPAL','AMT_CREDIT_LIMIT_ACTUAL' in the Credit Balance dataset.
 
             Features Transformed:
-            - MAX_PRINCIPAL_UTILIZATION_RATIO_{X}M: MAX Average ratio of receivable principal to credit limit in las x months.
+            - CB_MAX_RATIO_PRINCIPAL_UTILIZATION_{X}M: MAX Average ratio of receivable principal to credit limit in las x months.
            
             Returns:
                 features_df(pd.DataFrame): DataFrame with SK_ID_CURR Index and Transformed features
@@ -2256,20 +2481,22 @@ class CreditBalanceTransformation(BaseTransformer):
 
 
             for frame in self.time_frames:
-                filt  = (monthly_df['MONTHS_BALANCE'] >= -frame) & (monthly_df['MONTHS_BALANCE'] < 0)
-                monthly_frame = monthly_df.loc[filt].copy()
+                monthly_frame =self._filter_months(monthly_df,frame)
+
     
-
                 #represents how much principal amount of their credit limit is currently used.
-                monthly_frame['PRINCIPAL_UTILIZATION_RATIO'] = np.where(
-                            monthly_frame['AMT_CREDIT_LIMIT_ACTUAL_TOTAL'] > 0,
-                            monthly_frame['AMT_RECEIVABLE_PRINCIPAL_TOTAL'] / monthly_frame['AMT_CREDIT_LIMIT_ACTUAL_TOTAL'],
-                            np.nan)
-
-                feature_df = monthly_frame.groupby(by='SK_ID_CURR')['PRINCIPAL_UTILIZATION_RATIO'].max().to_frame(f'MAX_PRINCIPAL_UTILIZATION_RATIO_{frame}M')
-                features_df = self._safe_join(features_df, feature_df)
-
+                new_df = self._create_ratio_feature(monthly_frame,
+                                           'AMT_RECEIVABLE_PRINCIPAL_TOTAL',
+                                           'AMT_CREDIT_LIMIT_ACTUAL_TOTAL',
+                                           'CB_RATIO_PRINCIPAL_UTILIZATION')
+                
+                feature_df = new_df.groupby(by='SK_ID_CURR')['CB_RATIO_PRINCIPAL_UTILIZATION'].max().to_frame(f'CB_MAX_RATIO_PRINCIPAL_UTILIZATION_{frame}M').reset_index()
+                if features_df.empty:
+                    features_df = feature_df
+                else:
+                    features_df = features_df.merge(feature_df,on='SK_ID_CURR',how='outer')
             
+
             return features_df
         
         else:
@@ -2282,7 +2509,7 @@ class CreditBalanceTransformation(BaseTransformer):
             from the credit balance dataset
     
             Features Extracted:
-            - WORST_DPD_CREDIT_XM based on time frame:[3, 6, 9, 12, 24, 36, 72, 96] M
+            - CB_WORST_DPD_{XM}: based on time frame:[3, 6, 9, 12, 24, 36, 72, 96] M
 
             Returns:
             - feature_df : 
@@ -2296,14 +2523,18 @@ class CreditBalanceTransformation(BaseTransformer):
             features_df = pd.DataFrame()
 
             for frame in time_frames:
-                filt = self.df['MONTHS_BALANCE'] >= -frame
-                temp = self.df.loc[filt].copy()
-                feature_dpd = temp.groupby(by='SK_ID_CURR')['SK_DPD'].max().to_frame(f'WORST_DPD_CREDIT_{frame}M')
-                
-                features_df = self._safe_join(features_df, feature_dpd)
+                monthly_frame =self._filter_months(self.df,frame)
+
+                feature_dpd = monthly_frame.groupby(by='SK_ID_CURR')['SK_DPD'].max().to_frame(f'CB_WORST_DPD_{frame}M').reset_index()
+                if features_df.empty:
+                    features_df = feature_dpd
+                else:
+                    features_df = features_df.merge(feature_dpd,on='SK_ID_CURR',how='outer')
+
+            features_df = features_df.fillna(DPD_LOAN_DATA_MISSING) # -88888
+            features_df = features_df.reset_index()
 
 
-            features_df = features_df.sort_index()
             return features_df
         else:
             logger.debug('SK_DPD : column is not present in the DataFrame')
@@ -2313,7 +2544,7 @@ class CreditBalanceTransformation(BaseTransformer):
             from the Credit balance dataset.
 
             Features Extracted:
-            - WORST_DPD_DEF_CREDIT_XM for time frames [3, 6, 9, 12, 24, 36, 72, 96]
+            - CB_WORST_DPD_DEF_{XM} for time frames [3, 6, 9, 12, 24, 36, 72, 96]
 
             Returns:
             - feature_df : 
@@ -2326,13 +2557,18 @@ class CreditBalanceTransformation(BaseTransformer):
             features_df = pd.DataFrame()
 
             for frame in time_frames:
-                filt = self.df['MONTHS_BALANCE'] >= -frame
-                temp = self.df.loc[filt].copy()
-                feature_dpd = temp.groupby(by='SK_ID_CURR')['SK_DPD_DEF'].max().to_frame(f'WORST_DPD_DEF_CREDIT_{frame}M')
-                
-                features_df = self._safe_join(features_df, feature_dpd)
+                monthly_frame =self._filter_months(self.df,frame)
 
-            features_df = features_df.sort_index()
+                
+                feature_dpd = monthly_frame.groupby(by='SK_ID_CURR')['SK_DPD_DEF'].max().to_frame(f'CB_WORST_DPD_DEF_{frame}M').reset_index()
+                
+                if features_df.empty:
+                    features_df = feature_dpd
+                else:
+                    features_df = features_df.merge(feature_dpd,on='SK_ID_CURR',how='outer')
+
+            features_df = features_df.fillna(DPD_LOAN_DATA_MISSING) # -88888
+            
             return features_df
         else:
             logger.debug('MONTHS_BALANCE and SK_DPD_DEF: column is not present in the DataFrame')
@@ -2359,12 +2595,17 @@ class CreditBalanceTransformation(BaseTransformer):
 
            
             for extractor in self.feature_extractors:
+                 # log the method is running
+                method_name = extractor.__name__
+                logger.info(f"Current Method Running: {self.__class__.__name__}.{method_name}")        
+
+                
                 features_df = extractor()
+                
+                       
                 features_cols = features_df.columns.to_list()
 
-                # log the method is running
-                method_name = extractor.__name__
-                logger.info(f"Running {self.__class__.__name__}.{method_name}")
+               
 
                 main_df = main_df.merge(features_df,on='SK_ID_CURR',how='left')
                 main_df[features_cols] = main_df[features_cols].fillna(PLACEHOLDER)
