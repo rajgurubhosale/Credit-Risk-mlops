@@ -22,10 +22,8 @@ DN_MISSING_PLACEHOLDER = - 99999
 N_MISSING_PLACEHOLDER = - 88888
 #denominator missing
 D_MISSING_PLACEHOLDER = - 77777
-
 # missing value placeholder 
 PLACEHOLDER = - 99999
-
 # loan but the data is missing
 DPD_LOAN_DATA_MISSING  = -88888
 
@@ -2625,8 +2623,8 @@ class DataTransformation:
         self.data_transformation_config = data_transformation_config
         self.data_ingestion_config = data_ingestion_config 
         self.main_df_path =  os.path.join(self.data_ingestion_config.artifact_raw_dir,r'application_data.csv')
-
-        self.output_dir = self.data_ingestion_config.artifact_interim_dir
+        self.artifact_dir = ARTIFACT_DIR
+        self.output_dir = self.data_transformation_config.aggregated_artifact_interim_dir
         self.output_path = os.path.join(
             self.output_dir,
             "main_df_transformed.csv"

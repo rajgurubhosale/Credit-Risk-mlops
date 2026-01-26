@@ -18,7 +18,6 @@ PREVIOUS_APPLICATION_DATA  = "previous_application.csv"
 #dir to save the dataset 
 ARTIFACT_DIR = r'artifact'
 ARTIFACT_RAW_DIR = os.path.join(ARTIFACT_DIR,r'raw')
-ARTIFACT_INTERIM_DIR = os.path.join(ARTIFACT_DIR,r'interim')
 
 
 

@@ -9,12 +9,12 @@ stages:
       size: 2378
     - path: src/constants/data_ingestion_constants.py
       hash: md5
-      md5: 4722db3cabe0908a7bcd1fadd23ddd7e
-      size: 682
+      md5: 4dffa08cb7735a35940d5ca6cec122b7
+      size: 620
     - path: src/entity/data_ingestion_artifact.py
       hash: md5
-      md5: ec74dbce2443cd8f778aa15780402dae
-      size: 1405
+      md5: a51402459c1adf1e063fa79d6755445a
+      size: 1351
     outs:
     - path: artifact/raw
       hash: md5
@@ -39,16 +39,16 @@ stages:
       size: 8675
     - path: src/constants/data_ingestion_constants.py
       hash: md5
-      md5: 4722db3cabe0908a7bcd1fadd23ddd7e
-      size: 682
+      md5: 4dffa08cb7735a35940d5ca6cec122b7
+      size: 620
     - path: src/constants/data_validaton_constant.py
       hash: md5
       md5: c163bae015544ee6120b2ee4de033d48
       size: 53
     - path: src/entity/data_ingestion_artifact.py
       hash: md5
-      md5: ec74dbce2443cd8f778aa15780402dae
-      size: 1405
+      md5: a51402459c1adf1e063fa79d6755445a
+      size: 1351
     - path: src/entity/data_validation_artifact.py
       hash: md5
       md5: fd961532c9cce64d68f4e3f2c45f2544
@@ -68,16 +68,16 @@ stages:
       nfiles: 7
     - path: src/components/03_data_transformation.py
       hash: md5
-      md5: 0d56dc3c34001b626231cf624e2bd1e8
-      size: 116425
+      md5: 8dc5f230f22be07bc0aa69022cdf097b
+      size: 116437
     - path: src/constants/data_transformation_constant.py
       hash: md5
-      md5: a8421292334146c3a74d241a6cbd8b1f
-      size: 6083
+      md5: 9575e388acebff606cf5ede546341b4b
+      size: 6258
     - path: src/entity/data_transformation_artifact.py
       hash: md5
-      md5: 30b044069fb45c2585a3f8dfeac9bde3
-      size: 1399
+      md5: b513b968ef3f4ede34ae1b01194e0323
+      size: 1464
     - path: validation_report/validation_report.yaml
       hash: md5
       md5: f524e173bb7788272c4c07ed1fcfb94c
@@ -88,3 +88,66 @@ stages:
       md5: db7825f2b4bb18aebed33293e71315e0.dir
       size: 654023098
       nfiles: 1
+  03_data_transformation:
+    cmd: python src/components/03_data_transformation.py
+    deps:
+    - path: artifact/raw
+      hash: md5
+      md5: 3850413e5d3fe4e71cc4f32afb5c092a.dir
+      size: 2714293161
+      nfiles: 7
+    - path: src/components/03_data_transformation.py
+      hash: md5
+      md5: 7f6912effbfcfeefb7870b12f47ea4f2
+      size: 116477
+    - path: src/constants/data_transformation_constant.py
+      hash: md5
+      md5: 9575e388acebff606cf5ede546341b4b
+      size: 6258
+    - path: src/entity/data_transformation_artifact.py
+      hash: md5
+      md5: b513b968ef3f4ede34ae1b01194e0323
+      size: 1464
+    - path: validation_report/validation_report.yaml
+      hash: md5
+      md5: f524e173bb7788272c4c07ed1fcfb94c
+      size: 25
+    outs:
+    - path: artifact/interim
+      hash: md5
+      md5: db7825f2b4bb18aebed33293e71315e0.dir
+      size: 654023098
+      nfiles: 1
+  04_feature_quality_check:
+    cmd: python src/components/04_feature_quality_check.py
+    deps:
+    - path: artifact/interim
+      hash: md5
+      md5: db7825f2b4bb18aebed33293e71315e0.dir
+      size: 654023098
+      nfiles: 1
+    - path: artifact/interim/main_df_transformed.csv
+      hash: md5
+      md5: a4f24c61208c12308df80cb4d667020b
+      size: 654023098
+    - path: src/components/03_data_transformation.py
+      hash: md5
+      md5: 7f6912effbfcfeefb7870b12f47ea4f2
+      size: 116477
+    - path: src/components/04_feature_quality_check.py
+      hash: md5
+      md5: a9203c2d5306ca8929580f93cfecc418
+      size: 2766
+    - path: src/constants/data_quality_check_constant.py
+      hash: md5
+      md5: 3fc38eec3bc4320ab1fb1b04a6637f20
+      size: 114
+    - path: src/entity/quality_check_artifact.py
+      hash: md5
+      md5: fac8136f7d4a53c1c5034ce735f0a828
+      size: 308
+    outs:
+    - path: artifact/data_quality/main_df_feature_quality_df.csv
+      hash: md5
+      md5: bc3bf4c69da1d601fd006d8c7f510e8e
+      size: 27527

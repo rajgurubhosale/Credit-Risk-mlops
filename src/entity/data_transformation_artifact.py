@@ -24,3 +24,4 @@ class DataTransformationConfig:
     previous_application_dtypes_reduce: dict = field(default_factory=lambda: PREVIOUS_APPLICATION_DTYPES_REDUCE)
     pos_cash_reduce_dtypes: dict = field(default_factory=lambda: POS_CASH_REDUCE_DTYPES)
     credit_card_balance_reduce_dtypes: dict = field(default_factory=lambda: CREDIT_CARD_BALANCE_REDUCE_DTYPES)
+    aggregated_artifact_interim_dir: str = ARTIFACT_INTERIM_DIR

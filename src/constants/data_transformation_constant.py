@@ -1,5 +1,10 @@
 import numpy as np
+import os
 
+# interim data save after transformation path
+#dir to save the dataset 
+ARTIFACT_DIR = r'artifact'
+ARTIFACT_INTERIM_DIR = os.path.join(ARTIFACT_DIR,r'interim')
 
 
 DATA_VALIDATION_YAML = 'D:/home loan credit risk/validation_report/validation_report.yaml'

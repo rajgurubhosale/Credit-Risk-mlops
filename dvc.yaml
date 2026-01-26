@@ -21,7 +21,7 @@ stages:
     outs:
       - validation_report/validation_report.yaml
   
-  03_data_transformation.py:
+  03_data_transformation:
     cmd: python src/components/03_data_transformation.py
     deps:
       - src/components/03_data_transformation.py
@@ -32,6 +32,17 @@ stages:
     outs:
       - artifact/interim
   
-  
- 
+  04_feature_quality_check:
+    cmd: python src/components/04_feature_quality_check.py
+    deps:
+      - src/components/03_data_transformation.py
+      - src/components/04_feature_quality_check.py
+      - artifact/interim
+      - src/constants/data_quality_check_constant.py
+      - src/entity/quality_check_artifact.py
+      - artifact/interim/main_df_transformed.csv
+    outs:
+      - artifact/data_quality/main_df_feature_quality_df.csv
+
+    
  

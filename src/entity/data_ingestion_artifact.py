@@ -10,7 +10,6 @@ class DataIngestionConfig:
     #artifact_raw_dir path 
     artifact_raw_dir:str = ARTIFACT_RAW_DIR
     source_raw_path: str = RAW_DATA_URL
-    artifact_interim_dir: str = ARTIFACT_INTERIM_DIR
 
     #path of all datas
     application_data:str = APPLICATION_DATA
