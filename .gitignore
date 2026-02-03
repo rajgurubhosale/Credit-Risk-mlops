@@ -12,8 +12,8 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-src/components/05_feature_engineering.py
-notebooks/02_EDA.ipynb
 notebooks/FeatureENG.txt
 notebooks/cleanining_application_train.txt
 notebooks/docs.txt
+iterative
+artifact

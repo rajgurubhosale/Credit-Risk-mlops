@@ -1,17 +1,17 @@
 stages:
   01_data_ingestion:
-    cmd: python src/components/01_data_ingestion.py
+    cmd: python src/components/module_01_data_ingestion.py
     deps:
-      - src/components/01_data_ingestion.py
+      - src/components/module_01_data_ingestion.py
       - src/constants/data_ingestion_constants.py
       - src/entity/data_ingestion_artifact.py
     outs:
       - artifact/raw
     
   02_data_validation:
-    cmd: python src/components/02_data_validation.py
+    cmd: python src/components/module_02_data_validation.py
     deps:
-      - src/components/02_data_validation.py
+      - src/components/module_02_data_validation.py
       - artifact/raw
       - config/schema.yaml
       - src/constants/data_validaton_constant.py
@@ -22,9 +22,9 @@ stages:
       - validation_report/validation_report.yaml
   
   03_data_transformation:
-    cmd: python src/components/03_data_transformation.py
+    cmd: python src/components/module_03_data_transformation.py
     deps:
-      - src/components/03_data_transformation.py
+      - src/components/module_03_data_transformation.py
       - validation_report/validation_report.yaml
       - src/constants/data_transformation_constant.py
       - src/entity/data_transformation_artifact.py
@@ -33,16 +33,33 @@ stages:
       - artifact/interim
   
   04_feature_quality_check:
-    cmd: python src/components/04_feature_quality_check.py
+    cmd: python src/components/module_04_feature_quality_check.py
     deps:
-      - src/components/03_data_transformation.py
-      - src/components/04_feature_quality_check.py
+      - src/components/module_03_data_transformation.py
+      - src/components/module_04_feature_quality_check.py
       - artifact/interim
       - src/constants/data_quality_check_constant.py
       - src/entity/quality_check_artifact.py
       - artifact/interim/main_df_transformed.csv
-    outs:
-      - artifact/data_quality/main_df_feature_quality_df.csv
+    #outs:
+      #- artifact/data_quality/main_df_feature_quality_df.csv
 
-    
+  05_feature_engineering.py:
+    cmd: python src/components/module_05_feature_engineering.py
+    deps:
+      - src/components/module_05_feature_engineering.py
+      - src/components/module_04_feature_quality_check.py
+      - src/entity/data_transformation_artifact.py
+      - src/constants/feature_engineering_constant.py
+      - artifact/interim/main_df_transformed.csv
+    outs:
+      - artifact/splits/X_train.csv
+      - artifact/splits/X_test.csv
+      - artifact/splits/y_train.csv
+      - artifact/splits/y_test.csv
+      - artifact/binning/automatic/iv_df.csv
+      - artifact/binning/automatic/cat_bin_df.csv
+      - artifact/binning/automatic/numerical_feature_bins.pkl
+      - artifact/binning/automatic/selected_features.json
+
  

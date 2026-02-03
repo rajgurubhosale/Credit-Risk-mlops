@@ -1,9 +1,9 @@
 schema: '2.0'
 stages:
   01_data_ingestion:
-    cmd: python src/components/01_data_ingestion.py
+    cmd: python src/components/module_01_data_ingestion.py
     deps:
-    - path: src/components/01_data_ingestion.py
+    - path: src/components/module_01_data_ingestion.py
       hash: md5
       md5: e467d150294213309c0aab609fe06b6c
       size: 2378
@@ -22,7 +22,7 @@ stages:
       size: 2714293161
       nfiles: 7
   02_data_validation:
-    cmd: python src/components/02_data_validation.py
+    cmd: python src/components/module_02_data_validation.py
     deps:
     - path: artifact/raw
       hash: md5
@@ -33,7 +33,7 @@ stages:
       hash: md5
       md5: 369b20754d6e406e3ef83b1ee8343851
       size: 1056
-    - path: src/components/02_data_validation.py
+    - path: src/components/module_02_data_validation.py
       hash: md5
       md5: fc65b4bd6ecea570a4479f2e40035948
       size: 8675
@@ -89,17 +89,17 @@ stages:
       size: 654023098
       nfiles: 1
   03_data_transformation:
-    cmd: python src/components/03_data_transformation.py
+    cmd: python src/components/module_03_data_transformation.py
     deps:
     - path: artifact/raw
       hash: md5
       md5: 3850413e5d3fe4e71cc4f32afb5c092a.dir
       size: 2714293161
       nfiles: 7
-    - path: src/components/03_data_transformation.py
+    - path: src/components/module_03_data_transformation.py
       hash: md5
-      md5: 7f6912effbfcfeefb7870b12f47ea4f2
-      size: 116477
+      md5: 662b848f8a937fa006deb561d1195769
+      size: 116435
     - path: src/constants/data_transformation_constant.py
       hash: md5
       md5: 9575e388acebff606cf5ede546341b4b
@@ -119,7 +119,7 @@ stages:
       size: 654023098
       nfiles: 1
   04_feature_quality_check:
-    cmd: python src/components/04_feature_quality_check.py
+    cmd: python src/components/module_04_feature_quality_check.py
     deps:
     - path: artifact/interim
       hash: md5
@@ -130,14 +130,14 @@ stages:
       hash: md5
       md5: a4f24c61208c12308df80cb4d667020b
       size: 654023098
-    - path: src/components/03_data_transformation.py
+    - path: src/components/module_03_data_transformation.py
       hash: md5
-      md5: 7f6912effbfcfeefb7870b12f47ea4f2
-      size: 116477
-    - path: src/components/04_feature_quality_check.py
+      md5: 662b848f8a937fa006deb561d1195769
+      size: 116435
+    - path: src/components/module_04_feature_quality_check.py
       hash: md5
-      md5: a9203c2d5306ca8929580f93cfecc418
-      size: 2766
+      md5: 94f46ecb276312a065ff2bd7f2dc3b7a
+      size: 2755
     - path: src/constants/data_quality_check_constant.py
       hash: md5
       md5: 3fc38eec3bc4320ab1fb1b04a6637f20
@@ -146,8 +146,59 @@ stages:
       hash: md5
       md5: fac8136f7d4a53c1c5034ce735f0a828
       size: 308
-    outs:
-    - path: artifact/data_quality/main_df_feature_quality_df.csv
+  05_feature_engineering.py:
+    cmd: python src/components/module_05_feature_engineering.py
+    deps:
+    - path: artifact/interim/main_df_transformed.csv
       hash: md5
-      md5: bc3bf4c69da1d601fd006d8c7f510e8e
-      size: 27527
+      md5: a4f24c61208c12308df80cb4d667020b
+      size: 654023098
+    - path: src/components/module_04_feature_quality_check.py
+      hash: md5
+      md5: 94f46ecb276312a065ff2bd7f2dc3b7a
+      size: 2755
+    - path: src/components/module_05_feature_engineering.py
+      hash: md5
+      md5: 430cdad7b21b4fa5e49880abb3a9129d
+      size: 34222
+    - path: src/constants/feature_engineering_constant.py
+      hash: md5
+      md5: 41549d9984762534f8082798c63336de
+      size: 467
+    - path: src/entity/data_transformation_artifact.py
+      hash: md5
+      md5: b513b968ef3f4ede34ae1b01194e0323
+      size: 1464
+    outs:
+    - path: artifact/binning/automatic/cat_bin_df.csv
+      hash: md5
+      md5: ad1b402c352ce97946435c2602cfe752
+      size: 6264
+    - path: artifact/binning/automatic/iv_df.csv
+      hash: md5
+      md5: 63be635648c844936517758587b9bdf4
+      size: 13922
+    - path: artifact/binning/automatic/numerical_feature_bins.pkl
+      hash: md5
+      md5: cdda4cd399319698bc3d561bba342455
+      size: 436748
+    - path: artifact/binning/automatic/selected_features.json
+      hash: md5
+      md5: c54bc742162b66d6a96f654dfc15446e
+      size: 1437
+    - path: artifact/splits/X_test.csv
+      hash: md5
+      md5: 689ea20e86da5867a93fb79ed8b31a33
+      size: 178723369
+    - path: artifact/splits/X_train.csv
+      hash: md5
+      md5: 2f1dbb3769e3a9fd4b0c38e820765425
+      size: 417178823
+    - path: artifact/splits/y_test.csv
+      hash: md5
+      md5: 0b482e4792650c9563ac24a90da65ac3
+      size: 276770
+    - path: artifact/splits/y_train.csv
+      hash: md5
+      md5: 1b5302068658e83fcfd78df2dc3af4f7
+      size: 645779

@@ -2623,7 +2623,6 @@ class DataTransformation:
         self.data_transformation_config = data_transformation_config
         self.data_ingestion_config = data_ingestion_config 
         self.main_df_path =  os.path.join(self.data_ingestion_config.artifact_raw_dir,r'application_data.csv')
-        self.artifact_dir = ARTIFACT_DIR
         self.output_dir = self.data_transformation_config.aggregated_artifact_interim_dir
         self.output_path = os.path.join(
             self.output_dir,
