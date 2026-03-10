@@ -25,7 +25,7 @@ D_MISSING_PLACEHOLDER = - 77777
 # missing value placeholder 
 PLACEHOLDER = - 99999
 # loan but the data is missing
-DPD_LOAN_DATA_MISSING  = -88888
+DPD_LOAN_DATA_MISSING  = -99999    
 
 
 logger = config_logger('03_data_transformation')
@@ -56,7 +56,7 @@ class RatioFeatureMixin:
 
         return temp[['SK_ID_CURR', feature_name]]
 
-class ApplicationDfTransformer:
+class ApplicationDfTransformer(RatioFeatureMixin):
     '''basic preprocessing of application main dataset
         - preprocess df
         - create days to year features
@@ -72,7 +72,26 @@ class ApplicationDfTransformer:
         self.config = config
         self.main_df = pd.read_csv(main_df_path,dtype=self.config.application_data_dtypes_reduce)
 
-
+    def _create_features_main(self,numerator,denominator,feature_name):
+        
+         self.main_df[feature_name] = np.select(
+            condlist=[
+                self.main_df[numerator].isna() & self.main_df[denominator].isna(),
+                self.main_df[denominator].isna(),
+                self.main_df[numerator].isna()
+            ],
+            choicelist=[
+                DN_MISSING_PLACEHOLDER,
+                D_MISSING_PLACEHOLDER,
+                N_MISSING_PLACEHOLDER
+            ],
+            default=np.where(
+                self.main_df[denominator] == 0,
+                D_MISSING_PLACEHOLDER,
+                self.main_df[numerator] / self.main_df[denominator]
+            )
+        )
+          
     def _preprocessing(self):
         '''
         simplifying values in Application Df
@@ -106,7 +125,7 @@ class ApplicationDfTransformer:
 
                 if col in self.main_df.columns:
                     #converting the days feature to the years
-                    self.main_df[trasform_col] = round( -self.main_df[col] / 365, 2)    
+                    self.main_df[trasform_col] =  (-self.main_df[col] / 365).round(2)    
 
                     #converting new feature to float32 to reduce space 
                     self.main_df[trasform_col] = self.main_df[trasform_col].astype('float32')
@@ -128,8 +147,7 @@ class ApplicationDfTransformer:
 
         placeholder_values :
             - XNA / XAP / UNknown: Missing
-            - 365243, -1000.67 : -99999 PLACEHOLDER
-
+            - 1000.669983 : -99999 PLACEHOLDER
         '''
         try:
             # feature wise handling local placeholders
@@ -145,6 +163,201 @@ class ApplicationDfTransformer:
         except Exception as e:
 
             raise MyException(e,sys,logger)
+    def _extract_credit_income_ratio(self):
+        ''' Total credit amount to client income ratio.
+            Features Transformed:
+            - CREDIT_INCOME_RATIO: AMT_CREDIT / AMT_INCOME_TOTAL
+            
+            Returns:
+                features_df(pd.DataFrame): DataFrame with SK_ID_CURR Index and Transformed features
+        ''' 
+        self._create_features_main('AMT_CREDIT','AMT_INCOME_TOTAL','CREDIT_INCOME_RATIO')
+        
+    def _extract_annuity_income_ratio(self):
+        ''' Monthly annuity to client income ratio.
+            Measures monthly repayment burden relative to client income
+            Features Transformed:
+            - ANNUITY_INCOME_RATIO: AMT_ANNUITY / AMT_INCOME_TOTAL
+        '''
+        self._create_features_main('AMT_ANNUITY','AMT_INCOME_TOTAL','ANNUITY_INCOME_RATIO')
+        
+    def _extract_goods_credit_ratio(self):
+        '''  Goods price to credit amount ratio.
+            Measures the proportion of the loan amount that is backed by the goods price.
+            Features Transformed:
+            - GOODS_CREDIT_RATIO: AMT_GOODS_PRICE / AMT_CREDIT  
+           
+        '''
+        self._create_features_main('AMT_GOODS_PRICE','AMT_CREDIT','GOODS_CREDIT_RATIO')
+    
+    def _extract_annuity_credit_ratio(self):
+        '''  Annuity to credit amount ratio.
+            Measures the proportion of the total credit that is paid as annuity
+            Features Transformed:
+            - ANNUITY_CREDIT_RATIO: AMT_ANNUITY / AMT_CREDIT
+        '''
+        self._create_features_main('AMT_ANNUITY','AMT_CREDIT','ANNUITY_CREDIT_RATIO')
+
+    def _map_organization_to_group(self):
+        """
+        Consolidate ORGANIZATION_TYPE into broader organizational stability groups.
+        for Reduce high-cardinality noise from ORGANIZATION_TYPE and
+        Capture employment stability signal for credit risk modeling        
+        
+        Features Transformed:
+        - ORG_GROUP  :ORG_STABLE,ORG_PRIVATE,ORG_UNSTABLE,ORG_OTHER
+        
+        """
+
+        ORG_STABLE = [
+            "Government", "School", "University", "Medicine", "Police",
+            "Military", "Bank", "Insurance", "Security Ministries",
+            "Electricity", "Postal"
+        ]
+
+        ORG_PRIVATE = [
+            "Business Entity Type 1", "Business Entity Type 2", "Business Entity Type 3",
+            "Industry: type 1", "Industry: type 2", "Industry: type 3",
+            "Industry: type 4", "Industry: type 5", "Industry: type 7",
+            "Industry: type 9", "Industry: type 11",
+            "Trade: type 1", "Trade: type 2", "Trade: type 3",
+            "Trade: type 6", "Trade: type 7",
+            "Transport: type 1", "Transport: type 2", "Transport: type 4",
+            "Telecom", "Services", "Housing", "Mobile", "Security"
+        ]
+
+        ORG_UNSTABLE = [
+            "Self-employed", "Construction", "Agriculture", "Restaurant",
+            "Cleaning", "Realtor", "Advertising",
+            "Industry: type 8", "Industry: type 13", "Transport: type 3"
+        ]
+
+        ORG_OTHER = [
+            "Religion", "Culture", "Emergency", "Legal Services",
+            "Industry: type 6", "Industry: type 10", "Industry: type 12",
+            "Trade: type 4", "Trade: type 5"
+        ]
+
+        self.main_df["ORG_GROUP"] = "ORG_OTHER"
+
+        self.main_df.loc[self.main_df["ORGANIZATION_TYPE"].isin(ORG_STABLE), "ORG_GROUP"] = "ORG_STABLE"
+        self.main_df.loc[self.main_df["ORGANIZATION_TYPE"].isin(ORG_OTHER), "ORG_GROUP"] = "ORG_OTHER"
+        self.main_df.loc[self.main_df["ORGANIZATION_TYPE"].isin(ORG_PRIVATE), "ORG_GROUP"] = "ORG_PRIVATE"
+        self.main_df.loc[self.main_df["ORGANIZATION_TYPE"].isin(ORG_UNSTABLE), "ORG_GROUP"] = "ORG_UNSTABLE"
+        self.main_df.loc[self.main_df["ORGANIZATION_TYPE"] == "XNA", "ORG_GROUP"] = "MISSING"
+        self.main_df.drop(columns=['ORGANIZATION_TYPE'],inplace=True)
+
+    def _extract_document_provided_flag(self):
+        """
+        Create a binary indicator for whether the client submitted at least one document.
+         Reduces 20 sparse FLAG_DOCUMENT_* variables into a single feature
+
+        Features Transformed:
+        - DOCUMENT_PROVIDED_FLAG (binary)
+            * 0 : No documents submitted
+            * 1 : At least one document submitted
+        """
+
+        DOC_FLAGS = [
+            "FLAG_DOCUMENT_2", "FLAG_DOCUMENT_3", "FLAG_DOCUMENT_4", "FLAG_DOCUMENT_5",
+            "FLAG_DOCUMENT_6", "FLAG_DOCUMENT_7", "FLAG_DOCUMENT_8", "FLAG_DOCUMENT_9",
+            "FLAG_DOCUMENT_10", "FLAG_DOCUMENT_11", "FLAG_DOCUMENT_12", "FLAG_DOCUMENT_13",
+            "FLAG_DOCUMENT_14", "FLAG_DOCUMENT_15", "FLAG_DOCUMENT_16", "FLAG_DOCUMENT_17",
+            "FLAG_DOCUMENT_18", "FLAG_DOCUMENT_19", "FLAG_DOCUMENT_20", "FLAG_DOCUMENT_21"
+        ]
+
+        self.main_df["DOCUMENT_PROVIDED_FLAG"] = self.main_df[DOC_FLAGS].sum(axis=1)
+
+        # Bin into binary indicator
+        self.main_df["DOCUMENT_PROVIDED_FLAG"] = (
+            self.main_df["DOCUMENT_PROVIDED_FLAG"] > 0
+        ).astype(int)
+        
+    
+    def _bin_education_level(self):
+        """
+        Bins NAME_EDUCATION_TYPE into ordered education levels.
+
+        Mapping:
+        - Higher education + Academic degree -> Higher education
+        - Secondary / secondary special + Incomplete higher -> Secondary
+        - Lower secondary -> Lower secondary
+        """
+        education_map = {
+            "Higher education": "Higher education",
+            "Academic degree": "Higher education",
+            "Secondary / secondary special": "Secondary",
+            "Incomplete higher": "Secondary",
+            "Lower secondary": "Lower secondary"
+        }
+
+        self.main_df["NAME_EDUCATION_TYPE"] = self.main_df["NAME_EDUCATION_TYPE"].map(education_map)
+        
+    def _handle_missing_family_status(self):
+        """
+        Cleans NAME_FAMILY_STATUS by mapping unknown values
+        to an explicit MISSING category.
+        """
+
+        self.main_df["NAME_FAMILY_STATUS"] = (
+            self.main_df["NAME_FAMILY_STATUS"]
+            .replace("Unknown", "MISSING")
+        )
+        
+    def _map_occupation_to_group(self):
+        """
+        Groups OCCUPATION_TYPE into consolidated OCCUPATION_GROUP
+        based on skill level and job stability.
+        """
+        LOW_SKILL = [
+            "Low-skill Laborers", "Drivers", "Waiters/barmen staff",
+            "Security staff", "Laborers", "Cleaning staff", "Cooking staff"
+        ]
+
+        SERVICE = [
+            "Sales staff", "Private service staff", "Realty agents"
+        ]
+
+        SKILLED_PRO = [
+            "Core staff", "High skill tech staff", "IT staff",
+            "Medicine staff", "Accountants", "HR staff", "Secretaries"
+        ]
+
+        MANAGERS = ["Managers"]
+
+        self.main_df["OCCUPATION_GROUP"] = "MISSING"
+
+        self.main_df.loc[self.main_df["OCCUPATION_TYPE"].isin(LOW_SKILL), "OCCUPATION_GROUP"] = "LOW_SKILL"
+        self.main_df.loc[self.main_df["OCCUPATION_TYPE"].isin(SERVICE), "OCCUPATION_GROUP"] = "SERVICE"
+        self.main_df.loc[self.main_df["OCCUPATION_TYPE"].isin(SKILLED_PRO), "OCCUPATION_GROUP"] = "SKILLED_PRO"
+        self.main_df.loc[self.main_df["OCCUPATION_TYPE"].isin(MANAGERS), "OCCUPATION_GROUP"] = "MANAGERS"
+        self.main_df.drop(columns=['OCCUPATION_TYPE'],inplace=True)
+
+    def _encode_binary_flag_features(self):
+        ''' Convert binary flag features from categorical (1/0) to numeric (Y/N).
+            for binning purpose
+            maping: 1:Y,0:N
+        
+        Features Transformed:
+        - ['FLAG_WORK_PHONE','FLAG_EMP_PHONE','FLAG_PHONE','FLAG_EMAIL']
+        
+        '''
+        features = ['FLAG_WORK_PHONE','FLAG_EMP_PHONE','FLAG_PHONE','FLAG_EMAIL']
+        for feature in features:
+            self.main_df[feature] = self.main_df[feature].map({1:'Y',0:'N'})
+        
+    def _extract_social_any_default_flag(self):
+        """
+        Creates a binary indicator capturing whether the client has
+        any default observed in their social circle within 30 or 60 days.
+        Features Transformed:
+        - SOCIAL_ANY_DEFAULT
+
+        """
+        self.main_df["SOCIAL_ANY_DEFAULT"] = (
+            (self.main_df["DEF_30_CNT_SOCIAL_CIRCLE"] > 0) |
+            (self.main_df["DEF_60_CNT_SOCIAL_CIRCLE"] > 0)
+        ).astype(int)
         
     def run_preprocessing_steps(self):
 
@@ -154,9 +367,27 @@ class ApplicationDfTransformer:
                 self.main_df: returns the dataframe after all preprocessing
             '''
         try:
-            self._preprocessing()
-            self._convert_days_to_years()
-            self._replace_placeholders()
+            methods = [
+            self._preprocessing,
+            self._convert_days_to_years,
+            self._replace_placeholders,
+            self._extract_credit_income_ratio,
+            self._extract_annuity_income_ratio,
+            self._extract_goods_credit_ratio,
+            self._extract_annuity_credit_ratio,
+            self._map_organization_to_group,
+            self._extract_document_provided_flag,
+            self._bin_education_level,
+            self._handle_missing_family_status,
+            self._map_occupation_to_group,
+            self._encode_binary_flag_features,
+            self._extract_social_any_default_flag,
+            ]
+            class_name = self.__class__.__name__
+            for method in methods:
+                method_name = method.__name__
+                logger.info(f"Current Method Running: {class_name}.{method_name}")        
+                method()
 
             logger.info('Application DataFrame preprocessing done successfully')
 
@@ -593,7 +824,14 @@ class BureauTransformer(BaseTransformer,RatioFeatureMixin):
         if ('AMT_CREDIT_SUM_DEBT' in self.df.columns) and ('AMT_CREDIT_SUM' in self.df.columns):
             
             
-            feature_df = self._create_ratio_feature(self.df,'AMT_CREDIT_SUM_DEBT','AMT_CREDIT_SUM','B_RATIO_DEBT_TO_LOAN' )
+            active_df = self.df[self.df['CREDIT_ACTIVE']=='Active']
+
+            new_1 = active_df.groupby(by='SK_ID_CURR')['AMT_CREDIT_SUM_DEBT'].sum(min_count=1).to_frame()
+            new_2=  active_df.groupby(by='SK_ID_CURR')['AMT_CREDIT_SUM'].sum(min_count=1).to_frame()
+            new_df = new_1.merge(new_2,on='SK_ID_CURR',how='left')
+            new_df = new_df.reset_index()
+            feature_df = self._create_ratio_feature(new_df,'AMT_CREDIT_SUM_DEBT','AMT_CREDIT_SUM','B_RATIO_DEBT_TO_LOAN' )
+            
             feature_df = feature_df.reset_index()
             
             features_df = feature_df.groupby(by='SK_ID_CURR')['B_RATIO_DEBT_TO_LOAN'].mean().to_frame().reset_index()
@@ -847,7 +1085,7 @@ class InstallmentsPaymentsTransformation(BaseTransformer,RatioFeatureMixin):
         ''' Create num_underpaid_installment features over multiple time frame
     
             Features Transformed:
-            - NUM_UNDERPAID_INSTALLMENTS_ : Number of underpaid installments based on time frame:[180, 360, 720, 1080, 2160, 2880] D
+            - IP_NUM_UNDERPAID_INSTALLMENTS_ : Number of underpaid installments based on time frame:[180, 360, 720, 1080, 2160, 2880] D
 
             Returns:
                 DataFrame with SK_ID_CURR as index and WORST_DPD_INSTALLMENT_PAYMENTS_XM features
@@ -868,7 +1106,7 @@ class InstallmentsPaymentsTransformation(BaseTransformer,RatioFeatureMixin):
 
                 filt_df['NUM_UNDERPAID_INSTALLMENTS'] = (filt_df['AMT_INSTALMENT'] > filt_df['AMT_PAYMENT']).astype('int')
 
-                num_underpaid_installments = filt_df.groupby('SK_ID_CURR')['NUM_UNDERPAID_INSTALLMENTS'].sum().to_frame(f'NUM_UNDERPAID_INSTALLMENTS_{frame}D')
+                num_underpaid_installments = filt_df.groupby('SK_ID_CURR')['NUM_UNDERPAID_INSTALLMENTS'].sum().to_frame(f'IP_NUM_UNDERPAID_INSTALLMENTS_{frame}D')
 
                 features_df = self._safe_join(features_df,num_underpaid_installments)                
             
@@ -901,10 +1139,10 @@ class InstallmentsPaymentsTransformation(BaseTransformer,RatioFeatureMixin):
             filt_df['PAY_DIFF'] = filt_df['AMT_INSTALMENT'] - filt_df['AMT_PAYMENT']
 
             features_df =  filt_df.groupby(by='SK_ID_CURR')['PAY_DIFF'].agg(['mean','min','max','sum']).rename(columns= {
-                "mean":"IP_MEAN_RATIO_INSTALMENT_PAYMENT",
-                "min":"IP_MIN_RATIO_INSTALMENT_PAYMENT",
-                "max":"IP_MAX_RATIO_INSTALMENT_PAYMENT",
-                "sum":"IP_SUM_RATIO_INSTALMENT_PAYMENT"
+                "mean":"IP_MEAN_INSTALMENT_PAYMENT_DIFF",
+                "min":"IP_MIN_INSTALMENT_PAYMENT_DIFF",
+                "max":"IP_MAX_INSTALMENT_PAYMENT_DIFF",
+                "sum":"IP_SUM_INSTALMENT_PAYMENT_DIFF"
                 })
 
             return features_df
@@ -2693,7 +2931,8 @@ class DataTransformation:
             logger.info('DATA IS VALIDATED')
             try:
                 main_df = self._load_and_prepare_main_df()
-
+                # did this on purpose to handle this manually for improve this later
+    
                 final_df = self._apply_feature_transformations(main_df)
                 self._save_transformed_data(final_df)
             

@@ -15,7 +15,7 @@ DATA_VALIDATION_YAML = 'D:/home loan credit risk/validation_report/validation_re
 PLACEHOLDERS = {
     'local_placeholder': 
     {
-        'YEARS_EMPLOYED':{ -1000.67:-99999}
+        'YEARS_EMPLOYED':{-1000.67:-99999},
     },
     
     'global_placeholders':{"XNA": 'Missing', "XAP": 'Missing', "Unknown": 'Missing'}

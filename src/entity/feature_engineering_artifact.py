@@ -24,5 +24,5 @@ class FeatureEngConfig:
     test_size:float = TEST_SIZE
     splits_dir = SPLIT_DIR
     bin_dir = BINNING_DIR
-    automatic_bin_dir = AUTOMATIC_BINNING_DIR
+    prebin_dir = PREBIN_DIR
     

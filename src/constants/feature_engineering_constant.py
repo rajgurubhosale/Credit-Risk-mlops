@@ -4,7 +4,7 @@ ARTIFACT_DIR = r'artifact'
 SPLIT_DIR = os.path.join(ARTIFACT_DIR,'splits')
 
 BINNING_DIR = os.path.join(ARTIFACT_DIR,'binning')
-AUTOMATIC_BINNING_DIR = os.path.join(BINNING_DIR,'automatic')
+PREBIN_DIR = os.path.join(BINNING_DIR,'prebin')
 
 # Missing value handling
 DEFAULT_NUM_MISSING_VALUE = -99999
@@ -18,4 +18,4 @@ SPECIAL_CODES = {
 
 # Random seed
 DEFAULT_RANDOM_STATE = 42
-TEST_SIZE = 0.30
+TEST_SIZE = 0.20

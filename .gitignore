@@ -15,5 +15,8 @@ __pycache__/
 notebooks/FeatureENG.txt
 notebooks/cleanining_application_train.txt
 notebooks/docs.txt
+notebooks/04_post_manual_binning.ipynb
+notebooks/05_experiment_manaual_pre_binning.ipynb
+notebooks/view_data.ipynb
 iterative
 artifact

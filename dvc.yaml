@@ -44,7 +44,7 @@ stages:
     #outs:
       #- artifact/data_quality/main_df_feature_quality_df.csv
 
-  05_feature_engineering.py:
+  05_feature_engineering:
     cmd: python src/components/module_05_feature_engineering.py
     deps:
       - src/components/module_05_feature_engineering.py
@@ -57,9 +57,9 @@ stages:
       - artifact/splits/X_test.csv
       - artifact/splits/y_train.csv
       - artifact/splits/y_test.csv
-      - artifact/binning/automatic/iv_df.csv
-      - artifact/binning/automatic/cat_bin_df.csv
-      - artifact/binning/automatic/numerical_feature_bins.pkl
-      - artifact/binning/automatic/selected_features.json
+      - artifact/binning/prebin/iv_df.csv
+      - artifact/binning/prebin/cat_bin_df.csv
+      - artifact/binning/prebin/numerical_feature_bins.pkl
+      - artifact/binning/prebin/selected_features.json
 
  

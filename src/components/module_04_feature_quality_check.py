@@ -35,23 +35,31 @@ def generate_feature_quality_df(df: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
         .rename(columns={"index": "feature"})
     )
-
+    
+    single_value_ratio = (
+        df.apply(lambda x: x.value_counts(normalize=True, dropna=False).max())
+        .reset_index()
+        .rename(columns={"index": "feature", 0: "single_value_ratio"})
+    )
+    
     feature_quality_df = (
         special_df
         .merge(zero_df, on="feature", how="left")
         .merge(null_df, on="feature", how="left")
+        .merge(single_value_ratio, on="feature", how="left")
+
     )
 
     feature_quality_df["max_bad_ratio"] = feature_quality_df[
-        ["special_ratio", "zero_ratio", "null_ratio"]
+        ["special_ratio", "zero_ratio", "null_ratio","single_value_ratio"]
     ].max(axis=1)
 
     feature_quality_df["drop_feature"] = (
         feature_quality_df["max_bad_ratio"] > max_threshold
-    )
+        ) & ~feature_quality_df["feature"].str.contains("DPD|BAD", case=False)
+    
 
     return feature_quality_df
-
 
 def save_feature_quality_df(feature_quality_df: pd.DataFrame):
     """Persist feature quality report"""
@@ -89,4 +97,5 @@ def orchastrator(df):
     feature_quality_df = generate_feature_quality_df(df)
 
     feature_quality_csv_path = save_feature_quality_df(feature_quality_df)
+    
     return feature_quality_csv_path
