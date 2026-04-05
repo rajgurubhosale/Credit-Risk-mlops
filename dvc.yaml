@@ -32,11 +32,11 @@ stages:
     outs:
       - artifact/interim
   
-  04_feature_quality_check:
-    cmd: python src/components/module_04_feature_quality_check.py
+  04_feature_quality_filter:
+    cmd: python src/components/module_04_feature_quality_filter.py
     deps:
       - src/components/module_03_data_transformation.py
-      - src/components/module_04_feature_quality_check.py
+      - src/components/module_04_feature_quality_filter.py.py
       - artifact/interim
       - src/constants/data_quality_check_constant.py
       - src/entity/quality_check_artifact.py
@@ -44,11 +44,11 @@ stages:
     #outs:
       #- artifact/data_quality/main_df_feature_quality_df.csv
 
-  05_feature_engineering:
-    cmd: python src/components/module_05_feature_engineering.py
+  05_woe_binning_and_selection:
+    cmd: python src/components/module_05_woe_binning_and_selection.py
     deps:
-      - src/components/module_05_feature_engineering.py
-      - src/components/module_04_feature_quality_check.py
+      - src/components/module_05_woe_binning_and_selection.py
+      - src/components/module_04_feature_quality_filter.py
       - src/entity/data_transformation_artifact.py
       - src/constants/feature_engineering_constant.py
       - artifact/interim/main_df_transformed.csv
@@ -61,5 +61,21 @@ stages:
       - artifact/binning/prebin/cat_bin_df.csv
       - artifact/binning/prebin/numerical_feature_bins.pkl
       - artifact/binning/prebin/selected_features.json
+
+  06_bin_refinement_and_selection:
+    cmd: python src/components/module_06_bin_refinement_and_selection.py
+
+    deps:
+      - src/components/module_06_bin_refinement_and_selection.py
+      - artifact/binning/prebin/X_train_selected_woe.csv 
+      - artifact/binning/prebin/X_test_selected_woe.csv 
+      - artifact/binning/prebin/iv_df.csv
+      - src/entity/manual_bin_merging_artifact.py              
+      - src/constants/manual_bin_merging.py    
+      - artifact/binning/post_bin_manual/selected_features.json  # manualy selected features
+    outs:
+      - artifact/final/X_train_final.csv
+      - artifact/final/X_test_final.csv
+      
 
  
