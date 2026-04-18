@@ -1,0 +1,28 @@
+feature_quality_filter:
+  SPECIAL_VALUES:
+    - -99999
+    - -88888
+    - -77777
+  MAX_BAD_RATIO_THRESHOLD: 0.95
+
+feature_engineering:
+  default_num_missing_values: -99999
+  random_state:  42
+  test_size: 0.20
+  max_n_bins: 20
+  min_bin_pct: 0.05
+  rare_threshold: 0.01
+  eps: 1e-6
+
+bin_refinement:
+  correlation_threshold: 0.7     # from WOEFeatureSelector.correlation_filter
+  vif_threshold: 5.0               # filter_by_vif threshold
+  psi_threshold: 0.25              # psi_filter threshold
+
+model_training:
+  max_iter: 2000
+  c: 1
+  penalty: 'l2'
+  class_weight: 'balanced'
+  random_state: 42
+  
