@@ -77,5 +77,53 @@ stages:
       - artifact/final/X_train_final.csv
       - artifact/final/X_test_final.csv
       
+  07_model_training:
+    cmd: python src/components/module_07_model_training.py
+    deps:
+      - src/components/module_07_model_training.py
+      - src/components/module_06_bin_refinement_and_selection.py
+      - artifact/data/final/X_train_final.csv
+      - artifact/data/data_splits/y_train.csv
+    params:
+      - params.yaml:
+          - model_training
+    outs:
+      - artifact/model/model.pkl
+      - artifact/model/feature_importance.csv
 
- 
+  08_model_evaluation:
+    cmd: python src/components/module_08_model_evalution.py
+    deps:
+      - src/components/module_08_model_evalution.py
+      - artifact/model/model.pkl
+      - artifact/data/final/X_train_final.csv
+      - artifact/data/final/X_test_final.csv
+      - artifact/data/data_splits/y_train.csv
+      - artifact/data/data_splits/y_test.csv
+    outs:
+      - artifact/model_eval/roc_curve.png
+    metrics:
+      - artifact/model_eval/metrics.json
+
+  09_scorecard:
+    cmd: python src/components/module_09_scorecard.py
+    deps:
+      - src/components/module_09_scorecard.py
+      - artifact/model/model.pkl
+      - artifact/model/feature_importance.csv
+      - artifact/data/final/X_train_final.csv
+      - artifact/data/final/selected_num_bins.pkl
+      - artifact/binning/prebin/iv_df.csv
+      - artifact/binning/prebin/cat_bin_df.csv
+      - artifact/data/data_splits/y_train.csv
+    outs:
+      - artifact/scorecard/final_scorecard_rules.csv
+      - artifact/scorecard/scorecard_numerical_rules.csv
+      - artifact/scorecard/scorecard_categorical_rules.csv
+      - artifact/scorecard/scorecard_numerical_lookup.pkl
+      - artifact/scorecard/scorecard_categorical_lookup.pkl
+      - artifact/scorecard/scorecard_scaling_params.json
+      - artifact/scorecard/scored_train.csv
+      - artifact/scorecard/scorecard_table.csv
+    metrics:
+      - artifact/scorecard/scorecard_metrics.json
