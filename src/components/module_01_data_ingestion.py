@@ -1,26 +1,33 @@
 from src.logger import config_logger
 from src.exception import MyException
-import pandas as pd
-from src.constants.data_ingestion_constants import *
-from src.constants  import *
-from src.entity.data_ingestion_artifact import DataIngestionConfig
+from src.constants.artifacts_paths import *
+from src.entity.artifact_entity import DataIngestionArtifact
+from src.entity.config_entity import DataIngestionConfig
 import sys  
- 
-logger = config_logger('data_ingestion')
+import shutil
+logger = config_logger('module_01_data_ingestion.py')
 
 class DataIngestion:
     '''loads raw data from path and save in the  artifact dir'''
 
-    def __init__(self,data_ingestion_config: DataIngestionConfig):
+    def __init__(
+        self,
+        data_ingestion_config: DataIngestionConfig,
+        data_ingestion_artifact:DataIngestionArtifact
+        ):
         ''' initialize the DataIngestionConfig  with config 
             
             args:
                 data_ingestion_config: DataIngestionConfig Dataclass
                 '''
         self.data_ingestion_config = data_ingestion_config
-        self.artifact_raw_dir = self.data_ingestion_config.artifact_raw_dir
+        self.data_ingestion_artifact = data_ingestion_artifact
+        # to save the artifacts
+        self.data_ingestion_artifact.artifact_data_raw_dir.mkdir(
+                parents=True,
+                exist_ok=True
+            )
         
-        #create artifact\raw dir 
        
 
     def load_and_save_data(self,input_filename:str):
@@ -30,14 +37,20 @@ class DataIngestion:
                 input_filename: fileame of the dataset in The RAW_DATA_URL
         '''
         try:
-
             #load data from this dir
-            source_file_path = os.path.join(self.data_ingestion_config.source_raw_path,input_filename)
+            # source file
+            source_file_path = self.data_ingestion_config.source_raw_data_url / input_filename
+            
+            if not source_file_path.exists():
+                raise FileNotFoundError(
+                    f"{input_filename} not found in "
+                    f"{self.data_ingestion_config.source_raw_data_url}"
+                )
 
-            output_path = os.path.join(self.artifact_raw_dir,input_filename)
+            output_path = self.data_ingestion_artifact.artifact_data_raw_dir / input_filename
+            output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            dataset = pd.read_csv(source_file_path)
-            dataset.to_csv(output_path,index=False)
+            shutil.copy2(source_file_path, output_path)
             
             logger.info(f'dataset saved here:{output_path} successfully')
         except Exception as e:
@@ -45,21 +58,21 @@ class DataIngestion:
             
 
     def load_all(self):
-        ''' loads all the dataset from the RAW_DATA_URL And save in the artifact_raw_dir'''
+        ''' loads all the dataset from the RAW_DATA_URL And save in the artifact_data_raw_dir'''
         try:
-            
-            file_list = self.data_ingestion_config.load_all_dataset()
+        
+            file_list = self.data_ingestion_config.source_data_names_list
 
             for filename in file_list:
                 self.load_and_save_data(filename)
 
-            logger.info(f'all dataset loaded and saved in {self.artifact_raw_dir} successfully')
+            logger.info(f'all dataset loaded and saved in {self.data_ingestion_artifact.artifact_data_raw_dir} successfully')
         except Exception as e:
             raise MyException(e,sys,logger)
 
 if __name__ == '__main__':
     try:    
-        ingestion = DataIngestion(DataIngestionConfig())
+        ingestion = DataIngestion(DataIngestionConfig(),DataIngestionArtifact())
         ingestion.load_all()
     except Exception as e:
         logger.error(f'error occured during the data_ingestion{e}')

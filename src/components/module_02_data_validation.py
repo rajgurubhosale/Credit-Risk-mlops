@@ -1,227 +1,265 @@
 import pandas as pd
 import sys
-import os
 import yaml
-
+from pathlib import Path
 from src.logger import config_logger
 from  src.utils.main_utils import *
-
-from src.entity.data_validation_artifact import *
-from src.entity.data_ingestion_artifact import *
-
+from src.entity.artifact_entity import DataValidationArtifact
 from src.constants import *
-from src.constants.data_validaton_constant import *
-from src.constants.data_ingestion_constants  import *
-
-
-logger = config_logger('02_data_validation')
+from src.entity.artifact_entity import DataIngestionArtifact
+from src.constants.artifacts_paths import *
+from src.exception import MyException
+import gc
+logger = config_logger('module_02_data_validation.py')
 
 class DataValidation:
-    ''' validate the dataset compatiable with  defined cdata schema for  model pipeline
+    """
+    Validates critical business rules and pipeline dependencies.
+    Checks only what downstream feature engineering actually depends on.
+    Raises on failure — pipeline halts, nothing is silently skipped.
+    """
+
+    def __init__(
+        self,
+        validation_artifact: DataValidationArtifact,
+        data_ingestion_artifact: DataIngestionArtifact,
+        ):
+        self.validation_artifact = validation_artifact
+        self.data_ingestion_artifact = data_ingestion_artifact
+        self.validation_report = {}
+        
     
-        this class ensures that the data loaded in raw sources has the  validate number of columns
-        and have expected DataTypes.
-    '''
+    def _report_validation_true(self,database_name):        
+        ''' helper function just report validation status =True with data base name'''
+        self.validation_report[database_name] = True
+    
+    def _report_validation_false(self,e,database_name):
+        ''' helper function just report validation status = False with data base name'''
+        
+        self.validation_report[database_name] = {
+                "status": False,
+                "error": str(e)
+            }
+    
+        
+    def check_application(self):
+        '''data validation check for the application data'''
+        database_name = 'application_data'
 
-    def __init__(self,data_validation_config:DataValidationConfig,data_ingestion_config:DataIngestionConfig):
-
-        ''' initilaize the data_validation_config,data_ingestion_config.    
-
-            args:
-                data_validation_config: DataValidationConfig Dataclass contains dataset_schema_mappings
-                data_ingestion_config: DataIngestionConfig dataclass containing artifact\dir datapath
-        ''' 
-        self.data_validation_config = data_validation_config
-        self.data_ingestion_config = data_ingestion_config
-
-    def check_dataframe_schema(self,df: pd.DataFrame,yaml_schema_file:dict):
-
-        ''' validates if DataFrame match expected schema such as 
-                - columns count mismatch,
-                - extra feature
-                - missing feature 
-            args:
-                df: DataFrame to be validated
-                yaml_schema_file: yaml file containing exprected schema
-                '''
         try:
-            file_columns = yaml_schema_file['columns']
-            schema_col_set = set()
-
-            for i in file_columns:
-                schema_col_set.update((i.keys()))
-            df_columns = set(df.columns)
+            application_df = pd.read_csv(self.data_ingestion_artifact.application_data)
             
-            missing_columns_df = 0
-            extra_columns_df = 0
+            assert application_df.shape[0]> 0, "Application Dataset is empty"
+            # critical columns check
+            assert "TARGET" in application_df.columns,"TARGET column missing"
+            assert "SK_ID_CURR" in application_df.columns,"SK_ID_CURR missing"
+            
+            assert application_df["TARGET"].notna().all(),"TARGET contains null values"
 
-            missing_columns_df = schema_col_set.difference(df_columns)
-            extra_columns_df = df_columns.difference(schema_col_set)
+            assert application_df["SK_ID_CURR"].notna().all(),"SK_ID_CURR contains null values"
 
-            if len(file_columns)  != df.shape[1]:
-                self.status = False
-                self.error_msg += f'expected {file_columns} no of columns. got {df.shape[1]} \n'
-
-            if len(missing_columns_df) > 0:
-                self.status = False
-                self.error_msg += f'this feature:{ list(missing_columns_df)} are missing in DataFrame\n'
-
-            if len(extra_columns_df) > 0:
-                self.status = False
-                self.error_msg += f'this columns are extra in the df:{list(extra_columns_df)} \n'
-
-
-        except Exception as e:
-            raise MyException(e,sys,logger)
-
-    def _ensure_instance_yamlfile(self,yaml_schema_columns:dict):
-        ''' ensures the yaml schema returns columns always as a  list '''
+            assert application_df["SK_ID_CURR"].is_unique,"Duplicate SK_ID_CURR found"
         
-        if isinstance(yaml_schema_columns,list):
-            return yaml_schema_columns
-        elif isinstance(yaml_schema_columns,str):
-            return [yaml_schema_columns]
-        elif yaml_schema_columns is None:
-            return []
-        else:
-            return []
+            self._report_validation_true(database_name)
 
-    def validate_columns_dtypes(self,df:pd.DataFrame,yaml_schema_file):
-        ''' checks if the  categorical and numerical column  match expected schema
+            logger.info("Application dataset validation passed")
+            
+          
+        except Exception as e:
+            self._report_validation_false(e,database_name)
+            raise MyException(e,sys,logger)
+        finally:
+            del application_df
+            gc.collect()
+            
+    def check_bureau(self):
+        '''data validation check for the bureau data'''
+        database_name ='bureau'
 
-            args:
-                df: DataFrame to be validated
-                yaml_schema_file: yaml file containing expected schema
-        '''
         try:
-
-            cat_columns_df = df.select_dtypes(include=['object','category','bool']).columns.tolist()
-            num_columns_df = df.select_dtypes(exclude=['object','category','bool']).columns.tolist()
+            bureau_df = pd.read_csv(self.data_ingestion_artifact.bureau_data)
             
-            #all columns for the DataFrame from that DataFrame schema
-            categorical_columns_schema = self._ensure_instance_yamlfile( yaml_schema_file['categorical_columns'])
-            numerical_columns_schema = self._ensure_instance_yamlfile(yaml_schema_file['numerical_columns'])
-            all_columns_schema = categorical_columns_schema + numerical_columns_schema
-
-            missing_categorical_columns_df = []
-            missing_numerical_columns_df = []
-
-            for column in all_columns_schema:
-
-                if column in categorical_columns_schema:
-                    if column not in cat_columns_df:
-                        missing_categorical_columns_df.append(column)
-                
-                elif column in numerical_columns_schema:
-                    if column not in num_columns_df:
-                        missing_numerical_columns_df.append(column)
-
-            if len(categorical_columns_schema) != 0:
-                if len(missing_categorical_columns_df) != 0:
-                    self.status = False
-                    self.error_msg += f'this Categorical feature are missing in DataFrame:{missing_categorical_columns_df} \n'
-            else:
-                pass        
-
-            if len(missing_numerical_columns_df) > 0:
-                self.status = False
-                self.error_msg += f'this Numerical feature are missing in DataFrame:{missing_numerical_columns_df} \n'
-
+            assert bureau_df.shape[0] >0 ,"Bureau dataset is empty"
+            assert "SK_ID_BUREAU" in bureau_df.columns, "SK_ID_BUREAU missing"
+            assert "SK_ID_CURR" in bureau_df.columns,"SK_ID_CURR missing in bureau"
+            assert bureau_df["SK_ID_CURR"].notna().all(),"Null SK_ID_CURR in bureau"
+            self._report_validation_true(database_name)
+            logger.info("Bureau dataset validation passed")
+       
         except Exception as e:
+            self._report_validation_false(e,database_name)
+            
             raise MyException(e,sys,logger)
-        
-    def _verify_artifact_data(self):
-        '''verify if data files are present in the artifact_raw_dir or not'''
-        #data is  in data ingestion
-        try:    
-            artifact_raw_dir = self.data_ingestion_config.artifact_raw_dir
-        
-            if os.listdir(artifact_raw_dir):
-                logger.info(f'dataset are present in  {artifact_raw_dir}')
-            else:
-                logger.error(f'the {artifact_raw_dir} dir is empty')
-
-        except Exception as e:
-            raise MyException(e,sys,logger)
-        
-    def _create_validaton_report(self,flag:bool):
-        '''creates the validation_report/validaton_report.yaml file containing the bool data is data validated or not
+        finally:
+            del bureau_df
+            gc.collect()
             
-            args:
-                flag(bool): all data valid or not according to schema
-            
-            
-        '''
+    
+    def check_bureau_balance(self):
 
-        dir = 'validation_report'
-        os.makedirs(dir,exist_ok=True)
-
-        validation_report_path = os.path.join(dir,'validation_report.yaml')
-
-        validation_report = {
-            'is_data_validated': flag
-        }
-
-        with open(validation_report_path,'w') as file:
-            yaml.dump(validation_report,file)
-           
-
-    def validate_all_datasets_schema(self):
-        ''' 
-        Validates schema of datasets
-        For Each Dataset:
-            - load csv from artifact dir
-            - loads corresponding yaml schema file
-            - perform validation methods
-            
-        '''
+        database_name = 'bureau_balance'
         
         try:
-            self._verify_artifact_data()
-            df_schema_mappings = self.data_validation_config.load_dataset_schema_mapping()
-            
-            flag = True
-            for dataset_schema in df_schema_mappings:
-                self.status = True
-                self.error_msg = ''
-                
-                df_file_path = os.path.join(self.data_ingestion_config.artifact_raw_dir,dataset_schema['data_path'])
+            df = pd.read_csv(self.data_ingestion_artifact.bureau_balance)
 
-                df = pd.read_csv(df_file_path)
-                df.name = dataset_schema['name']
+            REQUIRED_COLS = [
+                "SK_ID_BUREAU",
+                "MONTHS_BALANCE",
+                "STATUS"
+            ]
 
-                schema_file = read_yaml_file( dataset_schema['schema_path'],logger)
-                
+            for col in REQUIRED_COLS:
+                assert col in df.columns,f"{col} missing — DPD features will fail"
 
-                self.check_dataframe_schema(df,schema_file)
-                self.validate_columns_dtypes(df,schema_file)
+            assert df.shape[0] > 0,"bureau_balance dataset empty"
 
+            self._report_validation_true(database_name)
 
-                if self.status == True:
-                    logger.info(f' {df.name} :  Dataframe schema and Columns DataTypes Validation Success')
-                    
-                else:
-                    logger.error(f'{df.name } : Errors Occuered While Validation Are: {self.error_msg}')
-                    flag = False
-            #this is used in the data_transformation module to ensure that the data is validated and the pipeline will not brok in
-            #data transformation
-            self._create_validaton_report(flag)
+            logger.info("Bureau Balance validation passed")
 
-            if flag:
-                logger.info(f'All datasets match expected schema')
-            else:
-                logger.error(f'All datasets doesnt match expected schema')
-
-            self._create_validaton_report(flag)
-
-                
         except Exception as e:
+            self._report_validation_false(e,database_name)
+
             raise MyException(e,sys,logger)
+        finally:
+            del df
+            gc.collect()
+    def check_installment_payments(self):
+        '''data validation check for the installment payments data'''
+        database_name = 'installments_payments'
+
+        try:
+            df = pd.read_csv(
+            self.data_ingestion_artifact.installment_payments_data,
+            on_bad_lines="skip",
+
+            )
+            
+            assert "SK_ID_CURR" in df.columns,"SK_ID_CURR missing"
+            assert "SK_ID_PREV" in df.columns,"SK_ID_PREV missing"
+            assert "NUM_INSTALMENT_VERSION" in df.columns,"NUM_INSTALMENT_VERSION missing"
+            assert df.shape[0]> 0,"dataframe is empty"
+            self._report_validation_true(database_name)
+
+            logger.info("installments payments validation passed")
+
+            
+        except Exception as e:
+            self._report_validation_false(e,database_name)
+            raise MyException(e,sys,logger)
+        finally:
+            del df
+            gc.collect()
+    def check_previous_applications(self):
+        '''data validation check fo r the previos applications data'''
+        database_name = 'previous_application'
+
+        try: 
+            df = pd.read_csv(self.data_ingestion_artifact.previous_application_data)
+            
+            assert "SK_ID_CURR" in df.columns,"SK_ID_CURR missing"
+            assert "SK_ID_PREV" in df.columns,"SK_ID_PREV missing" 
+            assert df.shape[0]> 0,"dataframe is empty"
+            self._report_validation_true(database_name)
+
+
+            
+            logger.info("previous_application  dataframe validation passed")
+
+      
+        except Exception as e:
+            self._report_validation_false(e,database_name)
+
+            raise MyException(e,sys,logger)
+        finally:
+            del df
+            gc.collect()
+    def check_pos_cash_balance(self):
+        '''data validation check for the previos pos cash balance data'''
+        database_name = 'POS_CASH_balance'
         
-if __name__== '__main__':
-   dv = DataValidation(DataValidationConfig(logger),DataIngestionConfig)
-   dv.validate_all_datasets_schema()
+        try:
+            df = pd.read_csv(self.data_ingestion_artifact.pos_cash_data)
+            assert "SK_ID_CURR" in df.columns,"SK_ID_CURR missing"
+            assert "SK_ID_PREV" in df.columns,"SK_ID_PREV missing" 
+            assert df.shape[0]> 0,"dataframe is empty"
+            assert "MONTHS_BALANCE" in df.columns,"MONTHS_BALANCE missing"
+            self._report_validation_true(database_name)
 
- 
 
+            logger.info("Pos cash balance dataframe validation passed")
+          
+        except Exception as e:
+            self._report_validation_false(e,database_name)
 
+            raise MyException(e,sys,logger)
+        finally:
+            del df
+            gc.collect()
+    def check_credit_balance(self):
+        '''data validation check for the previos credit balance data'''
+        database_name = 'credit_card_balance'
+
+        try:
+            df = pd.read_csv(self.data_ingestion_artifact.credit_card_balance)
+
+            assert "SK_ID_PREV" in df.columns,"SK_ID_PREV missing"
+            assert "SK_ID_CURR" in df.columns,"SK_ID_CURR missing"
+            assert "AMT_BALANCE" in df.columns,"AMT_BALANCE missing"
+            assert df.shape[0]> 0,"dataframe is empty"
+            self._report_validation_true(database_name)
+
+            logger.info("Credit balance validation passed")
+            
+        except Exception  as e:
+            self._report_validation_false(e,database_name)
+            raise MyException(e,sys,logger)
+        finally:
+            del df
+            gc.collect()
+    def save_report(self):
+
+        report_path = self.validation_artifact.validation_report_path
+
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Calculate final status
+        all_valid = all(
+            value == True
+            for value in self.validation_report.values()
+        )
+
+        self.validation_report['is_data_validated'] = all_valid
+
+        with open(report_path, "w") as file:
+            yaml.dump(self.validation_report, file)
+
+        logger.info("Validation report saved")
+        
+    def initiate_data_validation(self):
+
+        methods = [ 
+            self.check_application,
+            self.check_bureau,
+            self.check_bureau_balance,
+            self.check_installment_payments,
+            self.check_pos_cash_balance,
+            self.check_previous_applications,
+            self.check_credit_balance
+        ]
+
+        try:
+            for method in methods:
+                method()
+
+        except Exception as e:
+            logger.error("Validation failed")
+            self.validation_report['is_data_validated'] = False
+
+        finally:
+            # ALWAYS create output file
+            self.save_report()
+            
+if __name__ == '__main__':
+    dv = DataValidation(DataValidationArtifact(),DataIngestionArtifact())
+    dv.initiate_data_validation()

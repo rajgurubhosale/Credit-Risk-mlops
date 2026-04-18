@@ -1,9 +1,9 @@
-from src.entity.data_transformation_artifact import *
-from src.constants.data_transformation_constant import *
-from src.entity.feature_engineering_artifact import *
-from src.constants.feature_engineering_constant import *
+from src.entity.artifact_entity import FeatureEngArtifact,DataTransformationArtifact
+from src.entity.config_entity import FeatureEngConfig 
+from src.constants.artifacts_paths import *
 from src.components.module_04_feature_quality_filter import orchastrator,load_clean_df
 import json
+from src.utils.main_utils import read_yaml_file
 from sklearn.model_selection import train_test_split
 import pickle
 import logging
@@ -13,14 +13,13 @@ import sys
 from src.exception import MyException
 import numpy as np
 import pandas as pd
-from optbinning import OptimalBinning
 import gc
 
 logger = config_logger('module_05_feature_engineering.py')
 
 id_col = "SK_ID_CURR"
 target_col = "TARGET"
-
+DEFAULT_NUM_MISSING_VALUES = -99999
 def handle_missing_values(df, id_col="SK_ID_CURR"):
     '''Handle missing values for numerical variables'''
     num_cols = (
@@ -30,9 +29,10 @@ def handle_missing_values(df, id_col="SK_ID_CURR"):
         .drop(id_col)
     )
 
-    df[num_cols] = df[num_cols].fillna(FeatureEngConfig().default_num_missing_value)
-    return df
 
+    df[num_cols] = df[num_cols].fillna(DEFAULT_NUM_MISSING_VALUES)
+        
+    return df
 
 #-----------------------------------------------------------------
 class NumericalWOEBinner:
@@ -41,7 +41,7 @@ class NumericalWOEBinner:
     - Fit on TRAIN only
     - Transform TRAIN / TEST safely
     """
-    def __init__(self, id_col, special_codes=None, max_n_bins=20, min_prebin_size=0.05,prebinning_method='quantile'):
+    def __init__(self, id_col, special_codes=None, max_n_bins=20, min_prebin_size=0.05):
         '''
         Initialize WOE binning configuration.
         params
@@ -262,7 +262,7 @@ class NumericalWOEBinner:
                     target=y,
                     max_bins=self.max_n_bins,
                     min_bin_size=self.min_prebin_size,
-                    special_values=[-99999, -88888, -77777]
+                    special_values=[-99999, -88888, -77777,-66666]
                 )
 
                 summary["Bin"] = summary["Bin"].astype(str)
@@ -276,7 +276,7 @@ class NumericalWOEBinner:
                 logger.warning(f"Skipped {feature}: {e}")
                 
                 
-        logger.info("Number of IV entries:", len(iv_list))
+        logger.info(f"Number of IV entries: {len(iv_list)}")
         
         self.iv_df = pd.DataFrame(iv_list).sort_values("IV", ascending=False).reset_index(drop=True)
         if self.iv_df.empty:
@@ -583,6 +583,7 @@ class WOEFeatureSelector:
         self.id_col = id_col
         self.removed_low_iv_ = None
         self.removed_corr_ = None
+        self.selected_features_ = None
     
     def iv_filteration(self, X_woe, iv_df):
         """
@@ -645,8 +646,12 @@ class WOEFeatureSelector:
             iv_df = iv_df.loc[common_features]
 
             corr_matrix = X_filtered_woe.corr().abs()
+            
             upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
-
+            X_filtered_woe_columns = X_filtered_woe.columns 
+            del corr_matrix
+            del X_filtered_woe
+            gc.collect()
             drop_features = set()
 
             for feature in upper.columns:
@@ -671,19 +676,20 @@ class WOEFeatureSelector:
 
                 logger.debug(f"Corr group: {group} | kept: {best_feature}")
 
-            selected_features = [f for f in X_filtered_woe.columns if f not in drop_features]
+            self.selected_features_ = [f for f in X_filtered_woe_columns if f not in drop_features]
             self.removed_corr_ = list(drop_features)
 
-            logger.info(f"Total features before : {X_filtered_woe.shape[1]}")
-            logger.info(f"Total features after  : {len(selected_features)}")
+            logger.info(f"Total features before : {len(X_filtered_woe_columns)}")
+            logger.info(f"Total features after  : {len(self.selected_features_)}")
             logger.info(f"Dropped features      : {len(self.removed_corr_)}")
             logger.info(f"Removed {len(self.removed_corr_)} features due to high correlation (> {self.corr_threshold})")
-            logger.info(f"Remaining feature list final shape is  {len(selected_features)}")
+            logger.info(f"Remaining feature list final shape is  {len(self.selected_features_)}")
 
+            return self.selected_features_
+    
         except Exception as e:
             raise MyException(e, sys, logger)
 
-        return selected_features
 
     
     def fit(self, X_train_woe,iv_df):
@@ -700,7 +706,7 @@ class WOEFeatureSelector:
             logger.info(f'IV filtering DONE ')
             
             # Correlation + IV  filtering
-            self.selected_features_ = self.correlation_filter(X_train_woe,keep_features,iv_df)
+            self.selected_features_ = self.correlation_filter(X_train_woe, keep_features, iv_df)
             logger.info(f'Correlation filtering DONE succesfully')
 
         except Exception as e:
@@ -747,24 +753,25 @@ class WOEFeatureSelector:
         return self.transform(X_train_woe)
     
 class WOETransformer:
-    def __init__(self, id_col, target_col):
+    def __init__(self, id_col, target_col,max_n_bins,min_bin_pct,rare_threshold):
         self.id_col = id_col
         self.target_col = target_col
         self.fe_config = FeatureEngConfig()
-        self.be_config = BinningConfig()
+        self.max_n_bins = max_n_bins
+        self.min_bin_pct = min_bin_pct
+        self.rare_threshold = rare_threshold
         
         #config
         self.num_binner = NumericalWOEBinner(
             id_col=id_col,
             special_codes=self.fe_config.special_codes,
-            max_n_bins= self.be_config.max_n_bins,
-            min_prebin_size=self.be_config.min_bin_pct,
-            prebinning_method = self.be_config.prebinning_method
+            max_n_bins= self.max_n_bins,
+            min_prebin_size=self.min_bin_pct,
         )
 
         self.cat_binner = CategoricalWOEBinner(
             id_col=id_col,
-            rare_threshold=self.be_config.rare_threshold
+            rare_threshold=self.rare_threshold
         )
     
     def fit(self, X: pd.DataFrame, y: pd.Series):
@@ -824,54 +831,49 @@ class WOEArtifactManager:
     
     def __init__(self):
         self.fe_config = FeatureEngConfig()
-
-        self.bin_dir = self.fe_config.bin_dir
-        self.prebin_dir = self.fe_config.prebin_dir
-        self.splits_dir = self.fe_config.splits_dir
-        self._create_dirs()
-    
-    def _create_dirs(self):
-        os.makedirs(self.bin_dir, exist_ok=True)
-        os.makedirs(self.prebin_dir, exist_ok=True)
-        os.makedirs(self.splits_dir, exist_ok=True)
-
+        self.fe_artifact = FeatureEngArtifact()
    
 
     def save_iv_df(self, iv_df):
-        path = os.path.join(self.prebin_dir, "iv_df.csv")
-        if os.path.exists(path):
-            logger.warning(f"Overwriting existing IV file at {path}")
-        iv_df.to_csv(path, index=False)
-        logger.info(f"IV dataframe saved at: {path}")
+        
+        iv_df_path = self.fe_artifact.iv_df_path
+        if os.path.exists(iv_df_path):
+            logger.warning(f"Overwriting existing IV file at {iv_df_path}")
+        iv_df.to_csv(iv_df_path, index=False)
+        
+        logger.info(f"IV dataframe saved at: {iv_df_path}")
     
     def save_splits(self, X_train, X_test, y_train, y_test):
-        X_train.to_csv(os.path.join(self.splits_dir, "X_train.csv"), index=False)
-        X_test.to_csv(os.path.join(self.splits_dir, "X_test.csv"), index=False)
-        y_train.to_csv(os.path.join(self.splits_dir, "y_train.csv"), index=False)
-        y_test.to_csv(os.path.join(self.splits_dir, "y_test.csv"), index=False)
-        logger.info(f" splitted data saved at: {self.splits_dir}")
         
-
+        
+        X_train.to_csv(self.fe_artifact.data_splits_x_train_path, index=False)
+        
+        X_test.to_csv(self.fe_artifact.data_splits_x_test_path, index=False)
+        y_train.to_csv(self.fe_artifact.data_splits_y_train_path, index=False)
+        y_test.to_csv(self.fe_artifact.data_splits_y_test_path, index=False)
+        
+        logger.info(f" splitted data saved at: {self.fe_artifact.artifact_data_splits_dir}")
+        
         
     def save_categorical_bins(self, cat_bin_df):
-        path = os.path.join(self.prebin_dir, "cat_bin_df.csv")
+        path = self.fe_artifact.cat_bin_df_path
         cat_bin_df.to_csv(path, index=False)
         logger.info(f"Categorical WOE bins saved at: {path}")
+        
     
     def save_final_data(self,X_train,X_test):
         
-        X_train_path = os.path.join(self.prebin_dir, "X_train_selected_woe.csv")
-        X_test_path = os.path.join(self.prebin_dir, "X_test_selected_woe.csv")
+        X_train_path =  self.fe_artifact.selected_x_train_path
+        X_test_path = self.fe_artifact.selected_x_test_path
+        
         X_train.to_csv(X_train_path,index =False)
         X_test.to_csv(X_test_path,index =False)
-        logger.info(f'tHe Final Train_woe and Test_woe saved after feature selection:{ self.prebin_dir}  ')
+        logger.info(f'tHe Final Train_woe and Test_woe saved after feature selection:{ self.fe_artifact.artifact_bin_prebin_dir}  ')
         
 
     def save_numerical_bins(self, numerical_feature_bins):
-        path = os.path.join(
-            self.prebin_dir,
-            "numerical_feature_bins.pkl"
-        )
+        path = self.fe_artifact.numerical_feature_bins_path
+        
         with open(path, "wb") as f:
             pickle.dump(numerical_feature_bins, f)
         
@@ -880,25 +882,27 @@ class WOEArtifactManager:
         
         
     def save_selected_features(self, selected_features):
-        path = os.path.join(
-            self.prebin_dir,
-            "selected_features.json"
-        )
+        path = self.fe_artifact.selected_features_path
+        
         with open(path, "w") as f:
             json.dump(selected_features, f, indent=4)
 
         logger.info(f"Selected features saved at: {path}")
         
+        
 class WOEBinningPipeline:
-    def __init__(self, id_col, target_col):
+    def __init__(self, id_col, target_col,feature_eng_config:FeatureEngConfig,feature_eng_artifact:FeatureEngArtifact,data_transformation_artifact:DataTransformationArtifact):
         self.id_col = id_col
         self.target_col = target_col
-        
-        self.fe_config = FeatureEngConfig()
+        self.data_transformation_artifact = data_transformation_artifact
+        self.fe_config = feature_eng_config
+        self.fe_artifact = feature_eng_artifact
         self.artifact_manager = WOEArtifactManager()
         # Objects that will be set later
         self.woe_runner = None
         self.fe_selector = None
+        params_file = read_yaml_file(self.fe_config.params_path,logger)
+        self.params = params_file.get('feature_engineering')
         
     def _split_data(self, df):
 
@@ -909,8 +913,8 @@ class WOEBinningPipeline:
             X,
             y,
             stratify=y,
-            test_size=self.fe_config.test_size,
-            random_state=self.fe_config.default_random_state
+            test_size=self.params['test_size'],
+            random_state=self.params['random_state']
         )
 
         logger.info(f"Train shape: {X_train.shape}")
@@ -937,7 +941,16 @@ class WOEBinningPipeline:
     
     def _apply_woe_transformation(self, X_train, X_test, y_train):
 
-        self.woe_runner = WOETransformer(self.id_col, self.target_col)
+        max_n_bins = self.params['max_n_bins']
+        min_bin_pct = self.params['min_bin_pct']
+        rare_threshold = self.params['rare_threshold']
+        
+        self.woe_runner = WOETransformer(
+            self.id_col,
+            self.target_col,
+            max_n_bins,
+            min_bin_pct,
+            rare_threshold)
         
         
         X_train_woe = self.woe_runner.fit_transform(X_train, y_train)
@@ -989,8 +1002,9 @@ class WOEBinningPipeline:
     def run(self):
         try:
             logger.info("Pipeline execution started")
-    
-            data_path = r"D:\home loan credit risk\artifact\interim\main_df_transformed.csv"
+            
+            data_path = self.data_transformation_artifact.artifact_interim_main_transformed_df
+            
             logger.info(f"Loading dataset from: {data_path}")
             
             df = pd.read_csv(data_path)
@@ -998,9 +1012,11 @@ class WOEBinningPipeline:
             if "YEARS_EMPLOYED" in df.columns:
                 df['YEARS_EMPLOYED'] = df['YEARS_EMPLOYED'].replace({-1000.67:-99999})
             
-            for col in df.select_dtypes("int64"):
-                df[col] = pd.to_numeric(df[col], downcast="integer")
-                
+            
+            int_cols = df.select_dtypes(include=["int64"]).columns
+            df[int_cols] = df[int_cols].apply(pd.to_numeric, downcast="integer")
+            
+            
             float_cols = df.select_dtypes(include=["float64"]).columns
             df[float_cols] = df[float_cols].apply(pd.to_numeric, downcast="float")
 
@@ -1048,6 +1064,7 @@ class WOEBinningPipeline:
         
         
 if __name__ == '__main__':
-    fe_pipeline = WOEBinningPipeline(id_col,target_col)
+    fe_pipeline = WOEBinningPipeline(id_col,target_col,FeatureEngConfig(),FeatureEngArtifact(),DataTransformationArtifact)
+
     fe_pipeline.run()
     

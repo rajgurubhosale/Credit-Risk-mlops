@@ -1,16 +1,18 @@
 import os
 import pandas as pd
-from src.constants.data_quality_check_constant import *
-from src.entity.quality_check_artifact import *
-from src.constants.data_transformation_constant import *
-from src.entity.data_transformation_artifact import *
-
+from pathlib import Path
+from src.entity.config_entity import FeatureQualityFilterConfig
+from src.entity.artifact_entity import FeatureQualityFilterArtifact
+from src.logger import config_logger
+from src.utils.main_utils import read_yaml_file
+from src.constants.artifacts_paths import * 
 # constants
-special_values = DataQualityConfig().special_values
-max_threshold = DataQualityConfig().threshold
+
+logger = config_logger('module_04_feature_quality_filter.py')
 
 
-def generate_feature_quality_df(df: pd.DataFrame) -> pd.DataFrame:
+
+def  generate_feature_quality_df(df,special_values,max_threshold):
     """Create feature quality report"""
 
     # downcast
@@ -61,19 +63,13 @@ def generate_feature_quality_df(df: pd.DataFrame) -> pd.DataFrame:
 
     return feature_quality_df
 
-def save_feature_quality_df(feature_quality_df: pd.DataFrame):
+def save_feature_quality_df(feature_quality_df: pd.DataFrame,feature_quality_csv_path:Path):
     """Persist feature quality report"""
 
-    artifact_dir = ARTIFACT_DIR
-    data_quality_dir = DataQualityConfig().data_quality_dir
-    path = os.path.join(artifact_dir, data_quality_dir)
-
-    os.makedirs(path, exist_ok=True)
-
-    csv_path = os.path.join(path, "main_df_feature_quality_df.csv")
-    feature_quality_df.to_csv(csv_path, index=False)
-
-    return csv_path
+    
+    feature_quality_df.to_csv(feature_quality_csv_path, index=False)
+    
+    return feature_quality_csv_path
 
 
 def load_clean_df(input_df: pd.DataFrame, feature_quality_df: pd.DataFrame) -> pd.DataFrame:
@@ -93,9 +89,22 @@ def orchastrator(df):
     - saves the report
     - returns only the quality report file path
     """
+    # read yaml
+    params_path = FeatureQualityFilterConfig().params_path
+    feature_quality_artifact = FeatureQualityFilterArtifact()
 
-    feature_quality_df = generate_feature_quality_df(df)
+    params = read_yaml_file(params_path,logger)
+    special_values = params['feature_quality_filter']['SPECIAL_VALUES']
+    max_threshold = params['feature_quality_filter']['MAX_BAD_RATIO_THRESHOLD']
 
-    feature_quality_csv_path = save_feature_quality_df(feature_quality_df)
+
+
+    feature_quality_df = generate_feature_quality_df(df,special_values,max_threshold)
+    
+
+    feature_quality_csv_path = feature_quality_artifact.feature_quality_save_path
+    feature_quality_csv_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    feature_quality_csv_path = save_feature_quality_df(feature_quality_df,feature_quality_csv_path)
     
     return feature_quality_csv_path
