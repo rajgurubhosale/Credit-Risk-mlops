@@ -2,7 +2,7 @@ import pandas as pd
 import pandera as pa
 import yaml 
 from src.exception import MyException
-import os
+from pathlib import Path
 import sys
 
 def read_yaml_file(yaml_file_path:str,logger:object):
@@ -22,46 +22,42 @@ def read_yaml_file(yaml_file_path:str,logger:object):
     except FileNotFoundError as e:
         raise MyException(e,sys,logger)
     
-def save_object(obj:object,output_path:str):
-    #write this function when will be required
-    '''it will save the object in output_path can be model/object'''
-    pass
 
 
-def genrate_schema_dataset(name:str,df: pd.DataFrame,output_path:str):
-    '''this function creates the schema yaml file for the df and stores in the config dir
-        args:
-            name: name for yaml file which will be created
-            df: dataframe of which u want to create a schema
-            output_path: where to save this yaml schema file
-        return:
-            save the schema for that dataset in the output_path
-    '''
-    #create a new name+yaml file
-    file = os.path.join(output_path,name+'.yaml')
+def downcast_df_variables(df: Path) -> pd.DataFrame:
+    """Load data and optimize memory usage by downcasting numeric types."""
+    
+    try:
+        # Load data
 
-    with open(file,'w') as f:
-        #name+_columns:
-        f.write('columns:')
-        schema = pa.infer_schema(df)
-        for feature_name,data_type in schema.dtypes.items():
-            f.write(f'\n  - {feature_name}: {data_type}')
+        id_cols = [
+            "SK_ID_CURR",
+            "SK_ID_BUREAU",
+            "SK_ID_PREV"
+        ]
 
-        f.write('\n')
-        f.write('\n')
-        #name+_categorical_columns
-        f.write('categorical_columns:')
-        categorical_columns = df.select_dtypes(include=['object', 'category', 'bool']).columns.tolist()
-        for feature_name in categorical_columns:
-            f.write(f'\n  - {feature_name}')
-        
-        f.write('\n')
-        f.write('\n')
-        #name+_numerical_columns
-        f.write('numerical_columns:')
 
-        numerical_columns = df.select_dtypes(exclude=['object', 'category', 'bool']).columns.tolist()
-        for feature_name in numerical_columns:
-            f.write(f'\n  - {feature_name}')
+        int_cols = df.select_dtypes(include=["int64"]).columns
 
-        
+        # Exclude ID columns
+        int_cols = [col for col in int_cols if col not in id_cols]
+
+        df[int_cols] = df[int_cols].apply(
+            pd.to_numeric,
+            downcast="integer"
+        )
+
+
+        float_cols = df.select_dtypes(include=["float64"]).columns
+
+        df[float_cols] = df[float_cols].apply(
+            pd.to_numeric,
+            downcast="float"
+        )
+        obj_cols = df.select_dtypes(include=['object']).columns
+        df[obj_cols] = df[obj_cols].astype('category')
+
+        return df
+
+    except Exception as e:
+        raise Exception(f"Error loading data from {e}")
