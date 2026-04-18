@@ -1,5 +1,4 @@
 logs/
-artifact/
 src.egg-info/
 template.py
 src\__pycache__
@@ -19,4 +18,10 @@ notebooks/04_post_manual_binning.ipynb
 notebooks/05_experiment_manaual_pre_binning.ipynb
 notebooks/view_data.ipynb
 iterative
-artifact
+artifact/scorecard/scored_train.csv
+artifact/validation
+artifact/binning
+artifact/data
+artifact/experiment_results
+.vscode
+.dvc
