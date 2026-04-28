@@ -3295,7 +3295,7 @@ class CreditBalanceTransformation(BaseTransformer,RatioFeatureMixin):
                     )
                 
             features_df['CB_WT_CREDIT_UTIL_TREND_3M_12M'] = features_df['CB_WT_CREDIT_UTIL_3M'] - features_df['CB_WT_CREDIT_UTIL_12M']
-            
+            features_df['CB_WT_CREDIT_UTIL_TREND_3M_12M'] = features_df['CB_WT_CREDIT_UTIL_TREND_3M_12M'].clip(-2, 2)
             
             
             return features_df

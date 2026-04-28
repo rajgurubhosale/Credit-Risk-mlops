@@ -9,6 +9,7 @@ from src.logger import config_logger
 from src.exception import MyException
 import sys
 import json
+from sklearn.calibration import CalibratedClassifierCV
 
 logger = config_logger('module_07_model_training.py')
 
@@ -25,6 +26,7 @@ class ModelTraining:
         
     def train_model(self,X_train,y_train):
         
+
         model = LogisticRegression(
                 penalty=self.params['penalty'],         
                 solver='liblinear',   
@@ -38,6 +40,27 @@ class ModelTraining:
         
         return model
 
+    def calibrate_model(self, model, X_train, y_train):        
+        
+        calibrated_model = CalibratedClassifierCV(
+            model, 
+            method='sigmoid',
+            cv='prefit'
+        )
+        
+        calibrated_model.fit(X_train, y_train) 
+        
+        # validation log
+        raw_pd        = model.predict_proba(X_train)[:, 1]
+        calibrated_pd = calibrated_model.predict_proba(X_train)[:, 1]
+        
+        logger.info(f"Raw avg PD        : {raw_pd.mean():.4f}")
+        logger.info(f"Calibrated avg PD : {calibrated_pd.mean():.4f}")
+        logger.info(f"Actual bad rate   : {y_train.mean():.4f}")
+        
+        return calibrated_model
+            
+        
     def orchestrate(self):
 
         try:
@@ -82,7 +105,11 @@ class ModelTraining:
 
             # Train model
             model = self.train_model(X_train, y_train)
-
+            logger.info("Model trained successfully")
+ 
+            calibrated_model = self.calibrate_model(model, X_train, y_train)
+            logger.info("Model calibrated successfully")
+            
             # Save feature importance
             logger.info("Saving feature importance")
 
@@ -111,7 +138,8 @@ class ModelTraining:
             joblib.dump(
                 {
                     "model": model,
-                    "features": final_selected_features
+                    "features": final_selected_features,
+                    "calibrated_model":calibrated_model
                 },
                 model_path
             )

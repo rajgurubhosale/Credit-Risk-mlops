@@ -80,6 +80,7 @@ class ModelEvalArtifact:
     metrics_path:Path = MODEL_EVAL_METRICS_PATH
     model_eval_dir:Path = ARTIFACT_MODEL_EVAL_DIR
     roc_curve_path:Path = MODEL_EVAL_ROC_CURVE_PATH
+    callibration_plot_path:Path = MODEL_EVAL_CALLIBRATION_PLOT_PATH
 
 
 @dataclass

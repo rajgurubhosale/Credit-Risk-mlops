@@ -7,6 +7,9 @@ import matplotlib.pyplot as plt
 from src.exception import MyException
 from src.logger import config_logger
 import sys
+from sklearn.calibration import calibration_curve
+
+from sklearn.metrics import brier_score_loss
 
 logger = config_logger('module_08_model_evalution')
 
@@ -50,12 +53,11 @@ class ModelEvaluation:
 
         plt.figure()
 
-        plt.plot(fpr_train,tpr_train,label="Train ROC")
-
         plt.plot(fpr_test,tpr_test,label="Test ROC")
+        
         plt.plot(fpr_train,tpr_train,label=f"Train ROC (AUC={roc_auc_score(y_train, train_prob):.3f})")
         # Random line
-        plt.plot([0, 1], [0, 1])
+        plt.plot([0, 1], [0, 1], linestyle='--', color='gray', label="avg classifier")
 
         plt.xlabel("False Positive Rate")
         plt.ylabel("True Positive Rate")
@@ -66,7 +68,43 @@ class ModelEvaluation:
 
         # Save
         plt.savefig(roc_path)
+        
+    def save_calibration_plot(self, y_train, cal_train_prob, raw_train_prob,
+                                y_test,  cal_test_prob,  raw_test_prob, save_path):
+        
 
+        # --- Train calibration curve ---
+        frac_raw_train, mean_raw_train = calibration_curve(y_train, raw_train_prob, n_bins=10)
+        frac_cal_train, mean_cal_train = calibration_curve(y_train, cal_train_prob, n_bins=10)
+
+        # --- Test calibration curve ---
+        frac_raw_test, mean_raw_test = calibration_curve(y_test, raw_test_prob, n_bins=10)
+        frac_cal_test, mean_cal_test = calibration_curve(y_test, cal_test_prob, n_bins=10)
+
+        # --- Train Plot ---
+        plt.figure()
+        plt.plot([0,1], [0,1], linestyle='--', color='gray', label='Perfect')
+        plt.plot(mean_raw_train, frac_raw_train, marker='o', label='Raw Model')
+        plt.plot(mean_cal_train, frac_cal_train, marker='o', label='Calibrated Model')
+        plt.xlabel("Mean Predicted PD")
+        plt.ylabel("Actual Default Rate")
+        plt.title("Calibration Plot - Train")
+        plt.legend()
+        plt.savefig(str(save_path).replace(".png", "_train.png"))
+        plt.close()
+
+        # --- Test Plot ---
+        plt.figure()
+        plt.plot([0,1], [0,1], linestyle='--', color='gray', label='Perfect')
+        plt.plot(mean_raw_test, frac_raw_test, marker='o', label='Raw Model')
+        plt.plot(mean_cal_test, frac_cal_test, marker='o', label='Calibrated Model')
+        plt.xlabel("Mean Predicted PD")
+        plt.ylabel("Actual Default Rate")
+        plt.title("Calibration Plot - Test")
+        plt.legend()
+        plt.savefig(str(save_path).replace(".png", "_test.png"))
+        plt.close()
+        
     def evaluate_model(self):
 
         # Load model bundle
@@ -76,52 +114,82 @@ class ModelEvaluation:
             logger.info("Loading trained model")
             model = bundle["model"]
             features = bundle["features"]
+            calibrated_model = bundle['calibrated_model']
             
             
             X_train = pd.read_csv(self.bin_merge_artifact.X_train_final_path,usecols=features)
             y_train = pd.read_csv(self.fe_artifact.data_splits_y_train_path)
             y_train = y_train.values.ravel()
             
-            train_prob = model.predict_proba(X_train)[:, 1]
-            
-            auc_train = roc_auc_score(y_train, train_prob)
-            gini_train = self.calculate_gini(auc_train)
-            ks_train = self.calculate_ks(y_train, train_prob)
-
-
             # Load test data
             X_test = pd.read_csv(self.bin_merge_artifact.X_test_final_path,usecols=features)
             y_test = pd.read_csv(self.fe_artifact.data_splits_y_test_path)
             y_test = y_test.values.ravel()
             
-
-            # test metrics
-            test_prob = model.predict_proba(X_test)[:, 1]
             
-            auc_test = roc_auc_score(y_test, test_prob)
-            gini_test = self.calculate_gini(auc_test)
-            ks_test = self.calculate_ks(y_test, test_prob)
+            
+            raw_train_prob = model.predict_proba(X_train)[:, 1]
+            cal_train_prob = calibrated_model.predict_proba(X_train)[:, 1]
 
+            raw_test_prob  = model.predict_proba(X_test)[:, 1]
+            cal_test_prob  = calibrated_model.predict_proba(X_test)[:, 1]
+            
+            auc_train  = roc_auc_score(y_train, cal_train_prob)
+            gini_train = self.calculate_gini(auc_train)
+            ks_train   = self.calculate_ks(y_train, cal_train_prob)
+
+            auc_test   = roc_auc_score(y_test, cal_test_prob)
+            gini_test  = self.calculate_gini(auc_test)
+            ks_test    = self.calculate_ks(y_test, cal_test_prob)
+            
+            #brier scores test
+            brier_raw_train = brier_score_loss(y_train, raw_train_prob)
+            brier_cal_train = brier_score_loss(y_train, cal_train_prob)
+            baseline_train  = brier_score_loss(y_train, np.full_like(cal_train_prob, y_train.mean()))
+            brier_skill_score_train = 1 - (brier_cal_train / baseline_train)
+                    
+
+            #brier scores test
+            brier_raw_test  = brier_score_loss(y_test, raw_test_prob)
+            brier_cal_test  = brier_score_loss(y_test, cal_test_prob)
+            baseline_test   = brier_score_loss(y_test, np.full_like(cal_test_prob, y_test.mean()))
+            brier_skill_score_test = 1 - (brier_cal_test / baseline_test)
+                        
             # Save metrics
             metrics = {
-                "AUC_train": float(auc_train),
-                "GINI_train": float(gini_train),
-                "KS_train": float(ks_train),
+                "AUC_train":   float(auc_train),
+                "GINI_train":  float(gini_train),
+                "KS_train":    float(ks_train),
+                "AUC_test":    float(auc_test),
+                "GINI_test":   float(gini_test),
+                "KS_test":     float(ks_test),
 
-                "AUC_test": float(auc_test),
-                "GINI_test": float(gini_test),
-                "KS_test": float(ks_test)
+                "brier_raw_train": float(brier_raw_train),
+                "brier_cal_train": float(brier_cal_train),
+                "bss_train":       float(brier_skill_score_train),
 
+                "brier_raw_test":  float(brier_raw_test),
+                "brier_cal_test":  float(brier_cal_test),
+                "bss_test":        float(brier_skill_score_test),
             }
-        
+            
 
             with open(self.eval_artifact.metrics_path,"w") as f:
-                
                 json.dump(metrics,f,indent=4)
+                
             logger.info( f"Metrics saved at:{self.eval_artifact.metrics_path}")
+                        
+            self.save_roc_curve(
+                y_train, cal_train_prob,
+                y_test,  cal_test_prob,
+                self.eval_artifact.roc_curve_path
+            )
             
-            roc_curve_path = self.eval_artifact.roc_curve_path
-            self.save_roc_curve(y_train,train_prob,y_test,test_prob,roc_curve_path)        
+            self.save_calibration_plot(
+                y_train, cal_train_prob, raw_train_prob,
+                y_test,  cal_test_prob,  raw_test_prob,
+                self.eval_artifact.callibration_plot_path  # add this path to your artifact
+            )
             
             logger.info(metrics)
             logger.info("Model Evaluation Completed Successfully")

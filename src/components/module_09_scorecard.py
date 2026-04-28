@@ -410,171 +410,171 @@ class Scorecard:
 
         return X
     
-    def build_scorecard(self,scored_df):
-        
+    def build_scorecard(self, scored_df, X_woe, y_train):
+
         good = scored_df[scored_df['TARGET'] == 0]['credit_score']
         bad  = scored_df[scored_df['TARGET'] == 1]['credit_score']
-        
+
         logger.info(f"Good borrowers — mean: {good.mean()}, std: {good.std()}")
         logger.info(f"Bad borrowers  — mean: {bad.mean()},  std: {bad.std()}")
         logger.info(f"Separation     — diff: {good.mean() - bad.mean()} points")
-        
 
-        scored_df['score_decile'] = pd.qcut(scored_df['credit_score'], q=10, duplicates='drop')
-        decile_summary = scored_df.groupby('score_decile')['TARGET'].agg(['mean','count'])
-        decile_summary.columns = ['default_rate','count']
-        decile_summary['default_rate_pct'] = (decile_summary['default_rate'] * 100).round(2)
-        
-        
-        decile_summary['bad_count']  = (decile_summary['default_rate'] * decile_summary['count']).round(0)
-        decile_summary['good_count'] = decile_summary['count'] - decile_summary['bad_count']
-        
+        model_feature_order = list(self.model.feature_names_in_)
+        X_for_pd = X_woe[model_feature_order].copy()
+
+    
+        # Calibrated PD - using pre-saved calibrated model ✅
+        calibrated_pd = self.calibrated_model.predict_proba(X_for_pd)[:, 1]
+        logger.info(f"Calibrated avg PD  : {calibrated_pd.mean():.4f}")
+        logger.info(f"Actual bad rate     : {y_train.mean():.4f}")
+
+        # rest stays exactly the same
+        scored_df = scored_df.copy()
+        scored_df['pd_model'] = calibrated_pd
+        # ── Score decile bins ─────────────────────────────────────────────────
+        scored_df['score_decile'] = pd.qcut(
+            scored_df['credit_score'], q=10, duplicates='drop'
+        )
+
+        # ── Aggregate per bin ─────────────────────────────────────────────────
+        decile_summary = scored_df.groupby('score_decile').agg(
+            count            = ('TARGET',       'count'),
+            bad_count        = ('TARGET',       'sum'),
+            pd_model_avg     = ('pd_model',     'mean'),   # ✅ calibrated PD
+        )
+
+        decile_summary['good_count'] = (
+            decile_summary['count'] - decile_summary['bad_count']
+        )
+
+        # ── Calibrated PD % ───────────────────────────────────────────────────
+        decile_summary['pd_model_pct'] = (
+            decile_summary['pd_model_avg'] * 100
+        ).round(2)
+
+
+
+        # ── Observed DR — for backtesting only ────────────────────────────────
+        decile_summary['observed_dr_pct'] = (
+            (decile_summary['bad_count'] / decile_summary['count']) * 100
+        ).round(2)
+
+        # ── Cumulative bad capture rate ───────────────────────────────────────
         decile_summary['bad_capture_rate_cumsum'] = (
             decile_summary['bad_count'].cumsum() / decile_summary['bad_count'].sum() * 100
-            ).round(2)
-        decile_summary['lift'] = (
-            decile_summary['default_rate']
-            / scored_df['TARGET'].mean()
-        )
-        
+        ).round(2)
+
+    
         decile_summary = decile_summary.reset_index()
-        ks   = ks_2samp(good, bad).statistic
-        
+
+        # ── KS ────────────────────────────────────────────────────────────────
+        ks = ks_2samp(good, bad).statistic
         metrics = {
-            "ks":   round(ks, 4),
+            "ks"            : round(ks, 4),
+            "actual_bad_rate": round(float(y_train.mean()), 4),
         }
-        logger.info(f"KS: {metrics['ks']}")
+
+        logger.info(f"KS                 : {metrics['ks']}")
+        logger.info(f"Actual bad rate       : {metrics['actual_bad_rate']}")
 
         return decile_summary, metrics
-    
-    
+
+
     def orchestrate(self):
-        ''''
-        Main pipeline controller for scorecard generation.
-           1. Loads trained model
-            2. Builds scorecard rules
-            3. Saves scorecard outputs
-            4. Scores training dataset
-            5. Generates decile performance table
-            6. Saves all final outputs
-        Returns:
-        
-        - final_scorecard_rules : DataFrame
-            Final scorecard rule table.
-
-        - X_train_scored : DataFrame
-            Training data with credit scores.
-
-        - decile_table : DataFrame
-            Scorecard performance summary.
-
-        '''
         try:
-            
             logger.info("Loading trained model bundle")
-
+            
             bundle              = joblib.load(self.model_artifact.model_path)
-            self.model          = bundle['model']
-            self.final_features = bundle['features']
-            logger.info(f"Model loaded successfully with "f"{len(self.final_features)} features")
+            self.model               = bundle['model']
+            self.calibrated_model    = bundle['calibrated_model']  
+            self.final_features      = bundle['features']
             
             
-            logger.info("Loading IV , feature importance , num bins, cat_bin_df files")
- 
+            logger.info(f"Model loaded successfully with {len(self.final_features)} features")
+
+            logger.info("Loading IV, feature importance, num bins, cat_bin_df files")
             iv_df              = pd.read_csv(self.fe_artifact.iv_df_path)
             feature_importance = pd.read_csv(self.model_artifact.feature_importance_path)
 
             num_bins_path = self.merge_artifact.final_selected_num_bins_path
-
-            with open(num_bins_path,'rb') as f:
+            with open(num_bins_path, 'rb') as f:
                 num_bins = pickle.load(f)
-                
-            cat_bin_df = pd.read_csv(self.fe_artifact.cat_bin_df_path)
-            
-            
-            logger.info("Loading IV,feature_importance,num_bins ,cat_bin_df completed")
-            
-                
-            logger.info("Building scorecard rules")
 
-            final_scorecard_rules, FACTOR, INTERCEPT_POINTS = self.build_scorecard_rules(cat_bin_df,num_bins,iv_df, feature_importance)
-            
-            final_scorecard_rules.to_csv(self.scorecard_artifact.final_scorecard_rules_path,index=False)
-            logger.info(f'Final scorecard rules are saved here :{self.scorecard_artifact.scorecard_dir}')
-            
-            
-            self.num_scorecard_rules.to_csv(self.scorecard_artifact.scorecard_numerical_rules,index=False)
-            self.cat_scorecard_rules.to_csv(self.scorecard_artifact.scorecard_categorical_rules,index=False)
-            
-            logger.info(f'Numerical and Categorical rules are saved here :{self.scorecard_artifact.scorecard_dir}')
-            
-            
-            
+            cat_bin_df = pd.read_csv(self.fe_artifact.cat_bin_df_path)
+            logger.info("Loading IV, feature_importance, num_bins, cat_bin_df completed")
+
+            logger.info("Building scorecard rules")
+            final_scorecard_rules, FACTOR, INTERCEPT_POINTS = self.build_scorecard_rules(
+                cat_bin_df, num_bins, iv_df, feature_importance
+            )
+
+            final_scorecard_rules.to_csv(self.scorecard_artifact.final_scorecard_rules_path, index=False)
+            self.num_scorecard_rules.to_csv(self.scorecard_artifact.scorecard_numerical_rules, index=False)
+            self.cat_scorecard_rules.to_csv(self.scorecard_artifact.scorecard_categorical_rules, index=False)
+            logger.info(f'Scorecard rules saved at: {self.scorecard_artifact.scorecard_dir}')
+
             self.numerical_lookup = self.build_numerical_lookup()
-            
-            
-            joblib.dump(
-                self.numerical_lookup,
-                self.scorecard_artifact.scorecard_numerical_lookup
-            )
-            logger.info(f'Numerical Lookup dumped at :{self.scorecard_artifact.scorecard_dir}')
-            
-            
+            joblib.dump(self.numerical_lookup, self.scorecard_artifact.scorecard_numerical_lookup)
+
             self.categorical_lookup = self.build_categorical_lookup()
-            
-            joblib.dump(
-                self.categorical_lookup,
-                self.scorecard_artifact.scorecard_categorical_lookup
+            joblib.dump(self.categorical_lookup, self.scorecard_artifact.scorecard_categorical_lookup)
+            logger.info(f'Lookups saved at: {self.scorecard_artifact.scorecard_dir}')
+
+            # ── Load raw X_train for scoring ──────────────────────────────────
+            X_train = pd.read_csv(
+                self.fe_artifact.data_splits_x_train_path,
+                usecols=self.final_features
             )
-            
-            logger.info(f'Categorical Lookup dumped at :{self.scorecard_artifact.scorecard_dir}')
-                   
-            X_train = pd.read_csv(self.fe_artifact.data_splits_x_train_path,usecols=self.final_features)
-            y_train = pd.read_csv(self.fe_artifact.data_splits_y_train_path).squeeze()
-            logger.info(f'X_train and y_train is loaded')
-            
+            y_train = pd.read_csv(
+                self.fe_artifact.data_splits_y_train_path
+            ).squeeze().reset_index(drop=True)
+            logger.info('X_train and y_train loaded')
+
+            # ── Generate credit scores from raw data ──────────────────────────
             train_scored = self._batch_genrate_scores(X_train)
             train_scored['TARGET'] = y_train
+            train_scored = train_scored.reset_index(drop=True)
+            logger.info('Credit scores generated for train data')
 
-            logger.info(f'Scores for train data are genrated')
+            # ── Load WOE data for PD calibration ──────────────────────────────
+            X_woe = pd.read_csv(r'artifact\data\final\X_train_final.csv').reset_index(drop=True)
+            
+            if 'TARGET' in X_woe.columns:
+                X_woe = X_woe.drop(columns=['TARGET'])
+                logger.info("Dropped TARGET from X_woe")
 
-            train_scored.to_csv(self.scorecard_artifact.train_score_df_path,index=False)
-            
-            logger.info(f'Saved the train+scores in {self.scorecard_artifact.scorecard_dir}')
-            
-            train_scored = train_scored[['credit_score','TARGET']].copy()
-            
-            final_scorecard,metrics = self.build_scorecard(train_scored)
-            logger.info(f'Final ScoreCard is BUILT')
+            # ── Build scorecard decile table with calibrated PD ───────────────
+            final_scorecard, metrics = self.build_scorecard(train_scored, X_woe, y_train)
+            logger.info('Final ScoreCard is BUILT')
             logger.info(final_scorecard)
+
+            # ── Save train scores AFTER scorecard is built ────────────────────
             
-            
-            final_scorecard.to_csv(self.scorecard_artifact.final_scorecard_table_path,index=False)
-            logger.info(f'final scorecard deciles saved to :{self.scorecard_artifact.scorecard_dir}')
-            
-            with open(self.scorecard_artifact.scorecard_metrics_path,'w') as f:
+            train_scored.to_csv(self.scorecard_artifact.train_score_df_path, index=False)
+            logger.info(f'Saved train+scores at: {self.scorecard_artifact.scorecard_dir}')
+
+            final_scorecard.to_csv(self.scorecard_artifact.final_scorecard_table_path, index=False)
+            logger.info(f'Final scorecard deciles saved to: {self.scorecard_artifact.scorecard_dir}')
+
+            with open(self.scorecard_artifact.scorecard_metrics_path, 'w') as f:
                 json.dump(metrics, f, indent=4)
             logger.info(f"Metrics saved at: {self.scorecard_artifact.scorecard_metrics_path}")
 
-            
-            # save scaling params
+            # ── Save scaling params ───────────────────────────────────────────
             params = {
                 "FACTOR"           : float(FACTOR),
                 "INTERCEPT_POINTS" : float(INTERCEPT_POINTS),
                 "BASE_SCORE"       : self.BASE_SCORE,
                 "BASE_ODDS"        : self.BASE_ODDS,
                 "PDO"              : self.PDO,
-                "intercept"        :self.intercept_points
+                "intercept"        : self.intercept_points
             }
-            
             with open(self.scorecard_artifact.scorecard_scaling_params_path, 'w') as f:
                 json.dump(params, f)
             logger.info(f"Scaling parameters saved at: {self.scorecard_artifact.scorecard_scaling_params_path}")
-            
-            
-      
+
         except Exception as e:
-            raise MyException(e,sys,logger)
+            raise MyException(e, sys, logger)
     
 if __name__ =='__main__':
     logger.info("Starting Scorecard Orchestration Pipeline")

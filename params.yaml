@@ -21,7 +21,7 @@ bin_refinement:
 
 model_training:
   max_iter: 2000
-  c: 1
+  c:  1
   penalty: 'l2'
   class_weight: 'balanced'
   random_state: 42

@@ -450,12 +450,12 @@ class BinRefinementorchestrate:
         logger.info('Correlation Feature selection completed')
         logger.info(f"Datasets Shape after the correlation feature selection - X_train: {X_train.shape}, X_test: {X_test.shape}")
         
-        #vif_threshold = self.params['vif_threshold']
-        #vif_features, dropped_features = self.feature_selector.multicollinearity_vif_filter(
-        #    X_train, iv_df, vif_threshold
-        #)
-        dropped_features = ['PA_AVG_AMT_ANNUITY_CARDS', 'CB_STD_PAYMENT_VOLATILITY_9M', 'IP_DPD_TREND', 'CB_MAX_RATIO_AMT_PAYMENT_MIN_INST_9M', 'CB_MAX_RATIO_PAYMENT_BALANCE_24M', 'PA_RATIO_HC_REFUSED_LOANS', 'CB_MAX_RATIO_PAYMENT_BALANCE_3M', 'PA_LOANS_REFUSED_RECENT_1080D', 'B_CLOSED_CREDIT_RATIO']
-        vif_features = [f for f in corr_selected_features if f not in dropped_features] 
+        vif_threshold = self.params['vif_threshold']
+        vif_features, dropped_features = self.feature_selector.multicollinearity_vif_filter(
+            X_train, iv_df, vif_threshold
+        )
+        #dropped_features = ['PA_AVG_AMT_ANNUITY_CARDS', 'CB_STD_PAYMENT_VOLATILITY_9M', 'IP_DPD_TREND', 'CB_MAX_RATIO_AMT_PAYMENT_MIN_INST_9M', 'CB_MAX_RATIO_PAYMENT_BALANCE_24M', 'PA_RATIO_HC_REFUSED_LOANS', 'CB_MAX_RATIO_PAYMENT_BALANCE_3M', 'PA_LOANS_REFUSED_RECENT_1080D', 'B_CLOSED_CREDIT_RATIO']
+        #vif_features = [f for f in corr_selected_features if f not in dropped_features] 
 
                 
 
