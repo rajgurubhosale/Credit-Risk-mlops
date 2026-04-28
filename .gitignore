@@ -24,4 +24,3 @@ artifact/binning
 artifact/data
 artifact/experiment_results
 .vscode
-.dvc

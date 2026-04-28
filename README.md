@@ -94,7 +94,7 @@ Applied stricter 0.6 threshold for a cleaner feature set.
 ### 12. Ensemble Feature Selection → 24 features
 Applied RFE, Lasso, Stability Selection, Permutation Importance, and SHAP —
 then used a voting-based approach keeping features selected by majority of methods.
-### 12. Manual Feature Selection → 26 final features
+### 13. Manual Feature Selection → 26 final features
 Added back 2 feature from credit balance data that was lost during automated
 selection — so the signal of those data feature added back
 
@@ -126,8 +126,8 @@ This project implements both — **Logistic Regression PD**,
 and scaled into scorecard points using **PDO (Points to Double Odds) scaling**.
 
 Scorecards are:
-✅ Actionable — each feature contributes a visible score point
-✅ Fully interpretable by credit risk analysts
+✅ Actionable — each feature contributes a visible score point<br>
+✅ Fully interpretable by credit risk analysts<br>
 
 ---
 
