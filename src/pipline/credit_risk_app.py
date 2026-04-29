@@ -544,9 +544,9 @@ if predict_btn:
 
     with col_score:
         st.metric(label="💳 Credit Score", value=score)
-
+        
     with col_decision:
-        if score >= 724:
+        if score >= 725:
             st.success("✅ APPROVE")
         elif score >= 705:
             st.warning("⚠️ MANUAL REVIEW")
@@ -555,16 +555,15 @@ if predict_btn:
 
     with col_risk:
         if score >= 748:
-            st.success("🟢 very Low Risk")
-        elif score >= 732:
-            st.warning(" 🟢 low Risk")
-        elif score >= 715:
+            st.success("🟢 Very Low Risk")
+        elif score >= 733:
+            st.success("🟢 Low Risk")
+        elif score >= 725:
             st.warning("🟠 Medium Risk")
-        elif score >= 706:
-            st.warning("🔴 high Risk")
+        elif score >= 705:
+            st.warning("🔴 High Risk")
         else:
             st.error("🔴 Very High Risk")
-
     if score < 706:
         st.warning("⚠️ Score falls in top 2 risk deciles — captures 51% of all defaults.")
 
