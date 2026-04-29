@@ -63,7 +63,7 @@ Starting from **557 aggregated features** across these tables, the pipeline redu
 starting from **557 total features** aggregated and created from application, bureau, and behavioural data 
 reduced to **30 final features**  *industry-standard scorecard methodology* through 8 statistical elimination stages.
 
-![Feature Selection Pipeline](image\feature_pipeline.jpg)
+![Feature Selection Pipeline](image/feature_pipeline.jpg)
 *Figure 1: End-to-end feature selection process — 557 raw features reduced to 30 final features across 8 elimination stages.*
 
 A **Logistic Regression** model was trained on the final 30 features — chosen 
