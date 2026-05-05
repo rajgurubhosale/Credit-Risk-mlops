@@ -151,7 +151,7 @@ Loan decisions are based on the final credit score:
 
 Cutoffs are derived using an **Expected Value Framework** — balancing the 
 cost of approving a bad loan against the profit of approving a good one.
-
+Model reduces default risk by identifying high-risk applicants before loan approval
 
 ## 🔍 Model Explainability
 
