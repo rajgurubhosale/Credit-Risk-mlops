@@ -287,9 +287,8 @@ with col2:
 
 st.divider()
 
-# ─────────────────────────────────────────────────────────────────────────────
 # SECTION 8 – Previous Application Features
-# ─────────────────────────────────────────────────────────────────────────────
+
 st.subheader("📂 Previous Application Features")
 col1, col2 = st.columns(2)
 
