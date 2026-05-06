@@ -100,7 +100,7 @@ The model shows stable performance across train and test sets, indicating good g
 ###  Cutoff Decision (Expected Value Framework)
 
 Cutoffs are derived using an **Expected Value Framework** to ensure only profitable loans are approved.
-
+git reflog
 EV = (1 − PD) × Gain − PD × Loss
 - Cost of approving a bad loan: 0.70
 - Profit of approving a good loan: 0.06
