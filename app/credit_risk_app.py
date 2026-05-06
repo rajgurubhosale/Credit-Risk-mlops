@@ -3,8 +3,26 @@ import numpy as np
 import pandas as pd
 import joblib
 from pathlib import Path
-from src.entity.artifact_entity import ScorecardArtifact
 
+BASE_DIR = Path(__file__).resolve().parent
+ARTIFACT_DIR = BASE_DIR / "artifacts"
+
+@st.cache_data
+def load_scorecard_artifacts():
+    categorical_rules  = pd.read_csv(ARTIFACT_DIR / "scorecard_categorical_rules.csv")
+    numerical_rules    = pd.read_csv(ARTIFACT_DIR / "scorecard_numerical_rules.csv")
+    categorical_lookup = joblib.load(ARTIFACT_DIR / "scorecard_categorical_lookup.joblib")
+    numerical_lookup   = joblib.load(ARTIFACT_DIR / "scorecard_numerical_lookup.joblib")
+    scorecard_table    = pd.read_csv(ARTIFACT_DIR / "final_scorecard_table.csv")
+
+    return {
+        "categorical_rules":  categorical_rules,
+        "numerical_rules":    numerical_rules,
+        "categorical_lookup": categorical_lookup,
+        "numerical_lookup":   numerical_lookup,
+        "scorecard_table":    scorecard_table,
+    }
+    
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Credit Risk Predictor", page_icon="💳", layout="wide")
 
@@ -380,21 +398,6 @@ st.divider()
 # ─────────────────────────────────────────────────────────────────────────────
 # LOAD ARTIFACTS
 # ─────────────────────────────────────────────────────────────────────────────
-@st.cache_data
-def load_scorecard_artifacts():
-    scorecard_artifact    = ScorecardArtifact()
-    categorical_rules     = pd.read_csv(scorecard_artifact.scorecard_categorical_rules)
-    numerical_rules       = pd.read_csv(scorecard_artifact.scorecard_numerical_rules)
-    categorical_lookup    = joblib.load(scorecard_artifact.scorecard_categorical_lookup)
-    numerical_lookup      = joblib.load(scorecard_artifact.scorecard_numerical_lookup)
-    scorecard_table       = pd.read_csv(scorecard_artifact.final_scorecard_table_path)
-    return {
-        "categorical_rules":  categorical_rules,
-        "numerical_rules":    numerical_rules,
-        "categorical_lookup": categorical_lookup,
-        "numerical_lookup":   numerical_lookup,
-        "scorecard_table":    scorecard_table,
-    }
 
 artifacts          = load_scorecard_artifacts()
 categorical_lookup = artifacts["categorical_lookup"]
@@ -461,7 +464,8 @@ def single_score_applicant(numerical_lookup, categorical_lookup, user_info: dict
                 total_score        += score
                 breakdown[feature]  = score
 
-    total_score = 719.8443041917163 + total_score
+    BASE_SCORE = 719.8443041917163
+    total_score = BASE_SCORE + total_score
 
     return {
         'total_score': round(total_score, 4),
@@ -523,7 +527,8 @@ if predict_btn:
         "PA_AVG_RISK_WEIGHT_1080D":           pa_risk_1080,
         "PA_RATIO_CREDIT_APPLICATION_Cash":   pa_ratio_cash,
         "PA_RATIO_CREDIT_APPLICATION_POS":    pa_ratio_pos,
-
+        "PA_RATIO_AMT_CREDIT_TO_ANNUITY_POS": pa_ratio_credit_annuity_pos,
+        
         # Categorical
         "OCCUPATION_GROUP":                   occupation_group,
         "ORG_GROUP":                          org_group,
