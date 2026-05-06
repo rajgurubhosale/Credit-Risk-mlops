@@ -569,7 +569,25 @@ if predict_btn:
     st.divider()
 
     with st.expander("🔍 Feature Score Breakdown", expanded=False):
-        st.json(result["breakdown"])
+        
+        breakdown_df = pd.DataFrame(
+            list(result["breakdown"].items()),
+            columns=["Feature", "Score"]
+        )
 
+        # Sort DESC (positive on top, negative bottom)
+        breakdown_df = breakdown_df.sort_values(by="Score", ascending=False)
+
+        # Style function
+        def highlight_score(val):
+            if val < 0:
+                return "color: red; font-weight: bold;"
+            else:
+                return "color: green; font-weight: bold;"
+
+        styled_df = breakdown_df.style.applymap(highlight_score, subset=["Score"])
+
+        st.dataframe(styled_df, use_container_width=True)
+        
     with st.expander("🔍 User Input Breakdown", expanded=False):
         st.json(features)
