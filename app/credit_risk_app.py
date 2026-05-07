@@ -4,20 +4,13 @@ import pandas as pd
 import joblib
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent
-ARTIFACT_DIR = BASE_DIR / "artifacts"
-
 @st.cache_data
 def load_scorecard_artifacts():
-    categorical_rules  = pd.read_csv(ARTIFACT_DIR / "scorecard_categorical_rules.csv")
-    numerical_rules    = pd.read_csv(ARTIFACT_DIR / "scorecard_numerical_rules.csv")
-    categorical_lookup = joblib.load(ARTIFACT_DIR / "scorecard_categorical_lookup.joblib")
-    numerical_lookup   = joblib.load(ARTIFACT_DIR / "scorecard_numerical_lookup.joblib")
-    scorecard_table    = pd.read_csv(ARTIFACT_DIR / "final_scorecard_table.csv")
+    categorical_lookup = joblib.load(r"app\categorical_lookup.pkl")
+    numerical_lookup   = joblib.load(r"app\numerical_lookup.pkl")
+    scorecard_table    = pd.read_csv(r"artifact\scorecard\scorecard_table.csv")
 
     return {
-        "categorical_rules":  categorical_rules,
-        "numerical_rules":    numerical_rules,
         "categorical_lookup": categorical_lookup,
         "numerical_lookup":   numerical_lookup,
         "scorecard_table":    scorecard_table,
