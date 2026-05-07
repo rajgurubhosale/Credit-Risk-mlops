@@ -4,16 +4,16 @@ import pandas as pd
 import joblib
 from pathlib import Path
 
+BASE_DIR = Path(__file__).resolve().parent  # this gives you the /app folder
+
 @st.cache_data
 def load_scorecard_artifacts():
-    categorical_lookup = joblib.load(r"app\categorical_lookup.pkl")
-    numerical_lookup   = joblib.load(r"app\numerical_lookup.pkl")
-    scorecard_table    = pd.read_csv(r"artifact\scorecard\scorecard_table.csv")
+    categorical_lookup = joblib.load(BASE_DIR / "categorical_lookup.pkl")
+    numerical_lookup   = joblib.load(BASE_DIR / "numerical_lookup.pkl")
 
     return {
         "categorical_lookup": categorical_lookup,
         "numerical_lookup":   numerical_lookup,
-        "scorecard_table":    scorecard_table,
     }
     
 # ── Page config ──────────────────────────────────────────────────────────────
