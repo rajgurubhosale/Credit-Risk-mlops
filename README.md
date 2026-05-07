@@ -35,6 +35,10 @@ The output returns:
 - **Loan Decision** — Approve, Review, or Reject based on score band
 - **Risk Level** — how risky the applicant is at their score
 
+# 🚀 Live Demo
+
+👉 **[Credit Risk Scorecard System](https://credit-risk-scorecard-systemm.streamlit.app/)** — enter borrower details and get a real-time credit score, PD, and loan decision.
+
 ---
 ## 📂 Dataset
 
